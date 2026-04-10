@@ -1,0 +1,40 @@
+# ============================================================
+# IWAE — Importance Weighted Autoencoder
+# ============================================================
+# Uses K importance-weighted samples for a tighter variational bound:
+#   L_K(x) = E[log(1/K * sum_k w_k)]
+# where w_k = p(x|z_k) * p(z_k) / q(z_k|x).
+#
+# With K=1, equivalent to standard VAE. Typical values: K=5 or K=50.
+#
+# Reference: https://arxiv.org/abs/1509.00519 (Burda et al., 2015)
+#
+# Usage:
+#   uv run python run.py --config configs/iwae.yaml
+#   uv run python run.py --config configs/iwae.yaml --K 50  # tighter bound
+# ============================================================
+
+model:
+  model_name: iwae
+  prior: standard
+  z1_size: 40
+  z2_size: 40
+  h_size: 300
+
+training:
+  epochs: 2000
+  lr: 0.0005
+  batch_size: 100
+  test_batch_size: 100
+  warmup: 100
+  early_stopping_epochs: 50
+  seed: 42
+  K: 5                      # importance samples — key IWAE hyperparameter
+
+data:
+  dataset_name: dynamic_mnist
+
+evaluation:
+  cluster: false             # run clustering analysis (LOO-kNN, K-Means, HDBSCAN, t-SNE, UMAP)
+  S: 5000
+  MB: 100

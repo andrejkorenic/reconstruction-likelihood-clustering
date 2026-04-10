@@ -1,0 +1,42 @@
+# ============================================================
+# VAE with VampPrior
+# ============================================================
+# Variational Mixture of Posteriors prior (Tomczak & Welling, 2018).
+# Learns a set of pseudo-inputs whose posteriors form a mixture prior:
+#   p(z) = 1/K * sum_k q(z | u_k)
+#
+# Reference: https://arxiv.org/abs/1705.07120
+#
+# Usage:
+#   uv run python run.py --config configs/vae_vampprior.yaml
+# ============================================================
+
+model:
+  model_name: vae
+  prior: vampprior
+  z1_size: 40
+  z2_size: 40
+  h_size: 300
+
+  # VampPrior-specific
+  number_components: 500    # number of learnable pseudo-inputs
+  pseudoinputs_mean: -0.05  # init mean for pseudo-input weights
+  pseudoinputs_std: 0.01    # init std for pseudo-input weights
+
+training:
+  epochs: 2000
+  lr: 0.0005
+  batch_size: 100
+  test_batch_size: 100
+  warmup: 100
+  early_stopping_epochs: 50
+  seed: 42
+  K: 1
+
+data:
+  dataset_name: dynamic_mnist
+
+evaluation:
+  cluster: false             # run clustering analysis (LOO-kNN, K-Means, HDBSCAN, t-SNE, UMAP)
+  S: 5000
+  MB: 100

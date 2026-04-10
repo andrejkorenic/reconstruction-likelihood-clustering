@@ -1,0 +1,48 @@
+# ============================================================
+# Exemplar VAE — Data-driven prior
+# ============================================================
+# Uses training examples as mixture components for the prior:
+#   p(z) = 1/N * sum_n q(z | x_n)
+# with leave-one-out masking to prevent trivial solutions.
+#
+# Reference: https://arxiv.org/abs/2004.04795 (Aneja et al., NeurIPS 2020)
+#
+# Usage:
+#   uv run python run.py --config configs/vae_exemplar.yaml
+#
+# Slurm array job:
+#   uv run python run.py --config configs/vae_exemplar.yaml \
+#       --slurm_job_id $SLURM_JOB_ID --slurm_task_id $SLURM_ARRAY_TASK_ID \
+#       --seed $SLURM_ARRAY_TASK_ID
+# ============================================================
+
+model:
+  model_name: vae
+  prior: exemplar_prior
+  z1_size: 40
+  z2_size: 40
+  h_size: 300
+
+  # Exemplar prior-specific
+  number_components: 25000  # size of the random exemplar subset per batch
+  no_mask: false            # false = use leave-one-out masking (recommended)
+  approximate_prior: false  # true = use approximate nearest-neighbor lookup (faster)
+  approximate_k: 10         # k nearest neighbors when approximate_prior is true
+
+training:
+  epochs: 500               # exemplar prior converges faster than standard
+  lr: 0.0005
+  batch_size: 100
+  test_batch_size: 100
+  warmup: 100
+  early_stopping_epochs: 50
+  seed: 42
+  K: 1
+
+data:
+  dataset_name: dynamic_mnist
+
+evaluation:
+  cluster: false             # run clustering analysis (LOO-kNN, K-Means, HDBSCAN, t-SNE, UMAP)
+  S: 5000
+  MB: 100

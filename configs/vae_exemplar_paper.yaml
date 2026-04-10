@@ -1,0 +1,53 @@
+# ============================================================
+# ExemplarVAE — Data-Driven Exemplar Prior (Paper Settings)
+# ============================================================
+# Prior: p(z) = 1/k * sum_j q(z | x_j) where x_j are the k
+# approximate nearest exemplars from the training set.
+#
+# Approximate prior algorithm (get_approximate_nearest_exemplars):
+#   1. Sample a random candidate pool of `number_components` (500)
+#      training examples each batch.
+#   2. Compute pairwise distances in latent space to the pool.
+#   3. Take the top `approximate_k` (10) nearest candidates per
+#      batch element and re-encode with the current encoder.
+#   4. Cache is updated in-place each batch step.
+#
+# Leave-one-out (LOO) masking is active during training (no_mask: false)
+# to prevent the model from trivially matching each point to itself.
+#
+# Reference: Norouzi et al., NeurIPS 2020 (ExemplarVAE)
+#
+# Usage:
+#   uv run python run.py --config configs/vae_exemplar_paper.yaml
+# ============================================================
+
+model:
+  model_name: vae
+  prior: exemplar_prior
+  z1_size: 40                    # latent dimension
+  z2_size: 40                    # unused by flat VAE, kept for consistency
+  h_size: 300                    # hidden layer width (encoder + decoder)
+
+  # Exemplar prior settings (paper replication)
+  number_components: 500         # candidate pool size sampled each batch
+  no_mask: false                 # use leave-one-out masking during training
+  approximate_prior: true        # use approximate kNN (not exact over all 50k)
+  approximate_k: 10              # k nearest neighbors from the candidate pool
+
+training:
+  epochs: 2000
+  lr: 0.0005
+  batch_size: 100
+  test_batch_size: 100
+  warmup: 100                    # KL warm-up: beta ramps 0 -> 1 over this many epochs
+  early_stopping_epochs: 50      # stop if val loss doesn't improve for this many epochs
+  seed: 42
+  K: 1
+
+data:
+  dataset_name: dynamic_mnist
+
+evaluation:
+  cluster: false
+  S: 5000                        # importance samples for log-likelihood estimation
+  MB: 100
