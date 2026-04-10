@@ -1,0 +1,37 @@
+# ============================================================
+# IWAE — Importance Weighted Autoencoder, K=50
+# ============================================================
+# Tighter variational bound than K=5: L_K(x) = E[log(1/K * sum_k w_k)].
+# K=50 approaches the true log-likelihood but increases per-epoch cost ~10×
+# compared to K=5.
+#
+# Reference: https://arxiv.org/abs/1509.00519 (Burda et al., 2015)
+#
+# Usage:
+#   uv run python run.py --config configs/iwae_k50.yaml
+# ============================================================
+
+model:
+  model_name: iwae
+  prior: standard
+  z1_size: 40                    # latent dimension
+  z2_size: 40                    # unused by flat IWAE, kept for consistency
+  h_size: 300                    # hidden layer width (encoder + decoder)
+
+training:
+  epochs: 2000
+  lr: 0.0005
+  batch_size: 100
+  test_batch_size: 100
+  warmup: 100                    # KL warm-up: beta ramps 0 -> 1 over this many epochs
+  early_stopping_epochs: 50      # stop if val loss doesn't improve for this many epochs
+  seed: 42
+  K: 50                          # importance samples — tighter bound than K=5
+
+data:
+  dataset_name: dynamic_mnist
+
+evaluation:
+  cluster: false
+  S: 5000                        # importance samples for log-likelihood estimation
+  MB: 100

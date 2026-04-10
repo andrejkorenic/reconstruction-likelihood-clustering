@@ -1,0 +1,38 @@
+# ============================================================
+# VAE with Standard Normal Prior — N(0, I)
+# ============================================================
+# Baseline VAE configuration for Dynamic MNIST.
+# This is the simplest prior: p(z) = N(0, I).
+#
+# Usage:
+#   uv run python run.py --config configs/vae_standard.yaml
+#   uv run python run.py --config configs/vae_standard.yaml --epochs 50  # CLI override
+# ============================================================
+
+model:
+  model_name: vae           # architecture: vae, iwae, iwae_2level, hvae_2level, convhvae_2level
+  prior: standard           # prior: standard, vampprior, exemplar_prior
+  z1_size: 40               # latent dimension
+  z2_size: 40               # second latent dim (only for hierarchical models)
+  h_size: 300               # hidden layer width (encoder + decoder)
+  no_attention: false        # disable attention gates in GatedDense layers
+
+training:
+  epochs: 2000              # max training epochs (early stopping usually fires sooner)
+  lr: 0.0005                # learning rate (AdamNormGrad optimizer)
+  batch_size: 100           # training batch size
+  test_batch_size: 100      # evaluation batch size
+  warmup: 100               # KL warm-up: beta ramps 0 -> 1 over this many epochs
+  early_stopping_epochs: 50 # stop if val loss doesn't improve for this many epochs
+  seed: 42                  # random seed for reproducibility
+  K: 1                      # latent samples per data point (K>1 only for IWAE models)
+
+data:
+  dataset_name: dynamic_mnist  # dynamic_mnist, static_mnist, fashion_mnist, omniglot, ...
+
+evaluation:
+  cluster: false             # run clustering analysis (LOO-kNN, K-Means, HDBSCAN, t-SNE, UMAP)
+  recon_viz: false           # save reconstruction visualizations during evaluation
+  generate: false            # generate samples from the trained model
+  S: 5000                   # importance samples for log-likelihood estimation
+  MB: 100                   # mini-batch size for log-likelihood
