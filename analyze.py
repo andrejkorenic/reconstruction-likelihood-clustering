@@ -266,15 +266,24 @@ def main():
         print(f"Cyclic generation saved to {directory}cyclic_generation.png")
 
     if args.export_latents:
+        import re
         import pandas as pd
         csv_path = getattr(config, 'csv_path', None)
-        if not csv_path:
-            print("Error: --export_latents requires a model trained with --csv_path")
+        parquet_path = getattr(config, 'parquet_path', None)
+        if not csv_path and not parquet_path:
+            print("Error: --export_latents requires a model trained with --csv_path or --parquet_path")
             sys.exit(1)
 
-        n_meta = getattr(config, 'csv_meta_cols', 2)
-        df = pd.read_csv(csv_path, sep='\t')
-        x_all = df.iloc[:, n_meta:].values.astype(np.float32)
+        if parquet_path:
+            # parquet_timeseries: sample columns match 't_<digits>'; rest is meta
+            df = pd.read_parquet(parquet_path)
+            t_pat = re.compile(r"^t_\d+$")
+            t_cols = sorted(c for c in df.columns if t_pat.match(c))
+            x_all = df[t_cols].to_numpy(dtype=np.float32)
+        else:
+            n_meta = getattr(config, 'csv_meta_cols', 2)
+            df = pd.read_csv(csv_path, sep='\t')
+            x_all = df.iloc[:, n_meta:].values.astype(np.float32)
         x_min, x_max = x_all.min(), x_all.max()
         x_all = (x_all - x_min) / (x_max - x_min + 1e-7)
 
