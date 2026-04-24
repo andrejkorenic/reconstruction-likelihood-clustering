@@ -277,3 +277,80 @@ class csv_timeseries_loader(base_load_data):
             x_train, x_val, x_test, y_train, y_val, y_test, **kwargs)
 
         return train_loader, val_loader, test_loader, self.args
+
+
+class parquet_timeseries_loader(base_load_data):
+    """Loader for Parquet time-series data (calcium ingestion output).
+
+    Expects a Parquet file where:
+      - Sample columns are named t_000, t_001, ... t_{N-1} (strict 't_<digit>' pattern)
+      - All other columns are metadata (subject_id, group, roi_idx,
+        time_start_sec, etc.) and are dropped from the model input.
+
+    Global MinMax normalization to [0, 1]. Deterministic 80/10/10 split.
+    """
+
+    def __init__(self, args, **kwargs):
+        super().__init__(args)
+
+    def obtain_data(self):
+        return None, None
+
+    def load_dataset(self, **kwargs):
+        import re
+        import pandas as pd
+
+        parquet_path = getattr(self.args, 'parquet_path', None)
+        if not parquet_path:
+            raise ValueError("--parquet_path is required for parquet_timeseries dataset")
+
+        df = pd.read_parquet(parquet_path)
+        # strict sample pattern: t_<digits>. Excludes time_start_sec, time_end_sec, etc.
+        t_pat = re.compile(r"^t_\d+$")
+        t_cols = sorted(c for c in df.columns if t_pat.match(c))
+        if not t_cols:
+            raise ValueError(f"{parquet_path}: no 't_NNN' columns found")
+
+        x_all = df[t_cols].to_numpy(dtype=np.float32)                   # (N, T)
+        N, T = x_all.shape
+
+        x_min = float(x_all.min())
+        x_max = float(x_all.max())
+        x_all = (x_all - x_min) / (x_max - x_min + 1e-7)
+
+        y_all = np.zeros(N, dtype=int)
+
+        rng = np.random.default_rng(getattr(self.args, 'seed', 42))
+        perm = rng.permutation(N)
+        x_all = x_all[perm]
+        y_all = y_all[perm]
+
+        n_train = int(0.8 * N)
+        n_val   = int(0.1 * N)
+        x_train, y_train = x_all[:n_train],               y_all[:n_train]
+        x_val,   y_val   = x_all[n_train:n_train + n_val], y_all[n_train:n_train + n_val]
+        x_test,  y_test  = x_all[n_train + n_val:],        y_all[n_train + n_val:]
+
+        feat_dim = 1
+        self.args.seq_len             = T
+        self.args.feat_dim            = feat_dim
+        self.args.input_size          = [feat_dim, T]
+        self.args.input_type          = 'continuous'
+        self.args.use_logit           = False
+        self.args.dynamic_binarization = False
+        self.args.training_set_size   = n_train
+
+        x_train = x_train.reshape(-1, feat_dim * T)
+        x_val   = x_val.reshape(-1,   feat_dim * T)
+        x_test  = x_test.reshape(-1,  feat_dim * T)
+
+        print("Parquet TimeSeries data stats:")
+        print(f"  Source: {parquet_path}")
+        print(f"  Train: {len(x_train)}, Val: {len(x_val)}, Test: {len(x_test)}")
+        print(f"  Seq length: {T}, Features: {feat_dim}")
+        print(f"  Value range before normalisation: [{x_min:.4f}, {x_max:.4f}]")
+
+        train_loader, val_loader, test_loader = self.post_processing(
+            x_train, x_val, x_test, y_train, y_val, y_test, **kwargs)
+
+        return train_loader, val_loader, test_loader, self.args

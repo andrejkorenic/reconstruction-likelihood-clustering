@@ -379,6 +379,10 @@ def load_dataset(args, training_num=None, use_fixed_validation=False, no_binariz
         from .timeseries_loader import csv_timeseries_loader
         args.training_set_size = 0  # placeholder; overridden inside load_dataset()
         train_loader, val_loader, test_loader, args = csv_timeseries_loader(args).load_dataset(**kwargs)
+    elif args.dataset_name == 'parquet_timeseries':
+        from .timeseries_loader import parquet_timeseries_loader
+        args.training_set_size = 0
+        train_loader, val_loader, test_loader, args = parquet_timeseries_loader(args).load_dataset(**kwargs)
     else:
         raise Exception('Wrong name of the dataset!')
     print('train size', len(train_loader.dataset))

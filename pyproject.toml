@@ -10,6 +10,7 @@ dependencies = [
     "numpy>=2.4.3",
     "opencv-python>=4.13.0.92",
     "pandas>=3.0.2",
+    "pyarrow>=24.0.0",
     "pyyaml>=6.0.3",
     "scikit-learn>=1.8.0",
     "scipy>=1.17.1",

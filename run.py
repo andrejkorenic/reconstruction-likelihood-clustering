@@ -121,7 +121,7 @@ g.add_argument('--dataset_name', type=str, default='dynamic_mnist',
                         'histopathologyGray', 'freyfaces',
                         'svhn', 'cifar10',
                         'ecg5000', 'synthetic_timeseries',
-                        'csv_timeseries'],
+                        'csv_timeseries', 'parquet_timeseries'],
                help='dataset to use')
 
 # --- Time series --------------------------------------------------------------
@@ -143,6 +143,8 @@ g.add_argument('--csv_path', type=str, default=None,
                help='path to TSV file for csv_timeseries dataset (tab-separated)')
 g.add_argument('--csv_meta_cols', type=int, default=2,
                help='number of leading metadata columns to drop in csv_timeseries (default: 2)')
+g.add_argument('--parquet_path', type=str, default=None,
+               help='path to Parquet file for parquet_timeseries dataset')
 g.add_argument('--continuous',           action='store_true', help='treat data as continuous (gray) instead of binary')
 g.add_argument('--use_logit',            action='store_true', help='apply logit preprocessing to continuous data')
 g.add_argument('--lambd', type=float, default=1e-4,          help='lambda for logit transform (avoids log(0))')
