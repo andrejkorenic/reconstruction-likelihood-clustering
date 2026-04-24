@@ -58,6 +58,14 @@ g.add_argument('--cyclic_generation', action='store_true', default=False,
                help='cyclic generation through latent space')
 g.add_argument('--export_latents', action='store_true', default=False,
                help='encode all input rows → z_mean.npy (preserves original row order)')
+g.add_argument('--parquet_override', type=str, default=None,
+               help='override config.parquet_path for --export_latents; encodes '
+                    'an arbitrary parquet through the trained model (e.g. a full '
+                    'cohort including groups the model was not trained on)')
+g.add_argument('--out_z', type=str, default=None,
+               help='override output path for --export_latents (default: '
+                    '<model_dir>/z_mean.npy; use this to avoid overwriting the '
+                    'training-set latents)')
 
 # --- Settings -------------------------------------------------------------
 g = parser.add_argument_group('Settings')
@@ -269,9 +277,13 @@ def main():
         import re
         import pandas as pd
         csv_path = getattr(config, 'csv_path', None)
-        parquet_path = getattr(config, 'parquet_path', None)
+        # Parquet source: explicit --parquet_override wins over the training
+        # config's parquet_path. This lets us encode an arbitrary ROI set
+        # (e.g. full cohort) through a model that was trained on a subset.
+        parquet_path = args.parquet_override or getattr(config, 'parquet_path', None)
         if not csv_path and not parquet_path:
-            print("Error: --export_latents requires a model trained with --csv_path or --parquet_path")
+            print("Error: --export_latents requires a model trained with --csv_path or --parquet_path, "
+                  "or --parquet_override pointing to a parquet file")
             sys.exit(1)
 
         if parquet_path:
@@ -280,10 +292,12 @@ def main():
             t_pat = re.compile(r"^t_\d+$")
             t_cols = sorted(c for c in df.columns if t_pat.match(c))
             x_all = df[t_cols].to_numpy(dtype=np.float32)
+            print(f"Encoding from parquet: {parquet_path} (shape {x_all.shape})")
         else:
             n_meta = getattr(config, 'csv_meta_cols', 2)
             df = pd.read_csv(csv_path, sep='\t')
             x_all = df.iloc[:, n_meta:].values.astype(np.float32)
+            print(f"Encoding from csv: {csv_path} (shape {x_all.shape})")
         x_min, x_max = x_all.min(), x_all.max()
         x_all = (x_all - x_min) / (x_max - x_min + 1e-7)
 
@@ -297,7 +311,8 @@ def main():
                 parts.append(z_mean.cpu().numpy())
         z_mean = np.concatenate(parts, axis=0)  # (N, z_dim)
 
-        out_path = os.path.join(directory, 'z_mean.npy')
+        out_path = args.out_z or os.path.join(directory, 'z_mean.npy')
+        os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
         np.save(out_path, z_mean)
         print(f"LATENTS_PATH: {out_path}")
         print(f"Exported z_mean: shape {z_mean.shape} → {out_path}")
