@@ -78,6 +78,11 @@ g.add_argument('--ood_pseudo_recon', type=str, default=None,
                     'test ROI against each prototype, save -max log p(x|k) '
                     '(nats) and argmax k to <prefix>.nll.npy and '
                     '<prefix>.cluster.npy')
+g.add_argument('--export_pseudo_prototypes', type=str, default=None,
+               help='decode the K VampPrior pseudo-inputs '
+                    '(model.means(model.idle_input) -> q_z -> p_x) and '
+                    'save the resulting (K, D) raw waveform matrix as '
+                    'float32 to this path; for OOD validation diagnostics')
 
 # --- Settings -------------------------------------------------------------
 g = parser.add_argument_group('Settings')
@@ -153,10 +158,11 @@ def main():
     # Check at least one analysis flag is set
     analysis_flags = ['cluster', 'recon_viz', 'generate', 'KNN', 'classify',
                       'ood_scores', 'cyclic_generation', 'export_latents',
-                      'ood_recon_nll', 'ood_pseudo_recon']
+                      'ood_recon_nll', 'ood_pseudo_recon',
+                      'export_pseudo_prototypes']
     if not any(getattr(args, f) for f in analysis_flags):
         print("Error: no analysis flag specified. Use one or more of:")
-        print("  --cluster --recon_viz --generate --KNN --classify --ood_scores --cyclic_generation --export_latents --ood_recon_nll --ood_pseudo_recon")
+        print("  --cluster --recon_viz --generate --KNN --classify --ood_scores --cyclic_generation --export_latents --ood_recon_nll --ood_pseudo_recon --export_pseudo_prototypes")
         sys.exit(1)
 
     # Load model once
@@ -451,6 +457,24 @@ def main():
         print(f"Wrote pseudo-input recon: shape ({N},), K={K}, "
               f"NLL mean={nll.mean():.2f}, "
               f"unique clusters used: {len(np.unique(cluster))}/{K}")
+    if args.export_pseudo_prototypes:
+        K = config.number_components
+        with torch.no_grad():
+            if config.prior == 'vampprior':
+                # VampPrior: decode K learnable pseudo-inputs through encoder + decoder
+                pseudo_x = model.means(model.idle_input)         # (K, D)
+                z_mean_proto, _ = model.q_z(pseudo_x)            # (K, z_dim)
+            else:
+                # Standard / exemplar prior: sample K points from N(0, 1)
+                torch.manual_seed(0)
+                z_mean_proto = torch.randn(K, config.z1_size, device=args.device)  # (K, z_dim)
+            proto_p1, _ = model.p_x(z_mean_proto)            # (K, D), p1 = decoded mean
+        proto_arr = proto_p1.cpu().numpy().astype(np.float32)
+        out_path = args.export_pseudo_prototypes
+        os.makedirs(os.path.dirname(os.path.abspath(out_path)) or '.', exist_ok=True)
+        np.save(out_path, proto_arr)
+        print(f"PSEUDO_PROTOTYPES_PATH: {out_path}")
+        print(f"Wrote pseudo prototypes: shape {proto_arr.shape} → {out_path}")
 
     print("\nAll analyses complete.")
 
