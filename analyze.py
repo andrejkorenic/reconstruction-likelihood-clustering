@@ -58,6 +58,11 @@ g.add_argument('--cyclic_generation', action='store_true', default=False,
                help='cyclic generation through latent space')
 g.add_argument('--export_latents', action='store_true', default=False,
                help='encode all input rows → z_mean.npy (preserves original row order)')
+g.add_argument('--export_pseudo_prototypes', type=str, default=None,
+               help='decode the K VampPrior pseudo-inputs '
+                    '(model.means(model.idle_input) -> q_z -> p_x) and '
+                    'save the resulting (K, D) raw waveform matrix as '
+                    'float32 to this path; for OOD validation diagnostics')
 
 # --- Settings -------------------------------------------------------------
 g = parser.add_argument_group('Settings')
@@ -132,10 +137,11 @@ def main():
 
     # Check at least one analysis flag is set
     analysis_flags = ['cluster', 'recon_viz', 'generate', 'KNN', 'classify',
-                      'ood_scores', 'cyclic_generation', 'export_latents']
+                      'ood_scores', 'cyclic_generation', 'export_latents',
+                      'export_pseudo_prototypes']
     if not any(getattr(args, f) for f in analysis_flags):
         print("Error: no analysis flag specified. Use one or more of:")
-        print("  --cluster --recon_viz --generate --KNN --classify --ood_scores --cyclic_generation --export_latents")
+        print("  --cluster --recon_viz --generate --KNN --classify --ood_scores --cyclic_generation --export_latents --export_pseudo_prototypes")
         sys.exit(1)
 
     # Load model once
@@ -292,6 +298,25 @@ def main():
         np.save(out_path, z_mean)
         print(f"LATENTS_PATH: {out_path}")
         print(f"Exported z_mean: shape {z_mean.shape} → {out_path}")
+
+    if args.export_pseudo_prototypes:
+        K = config.number_components
+        with torch.no_grad():
+            if config.prior == 'vampprior':
+                # VampPrior: decode K learnable pseudo-inputs through encoder + decoder
+                pseudo_x = model.means(model.idle_input)         # (K, D)
+                z_mean_proto, _ = model.q_z(pseudo_x)            # (K, z_dim)
+            else:
+                # Standard / exemplar prior: sample K points from N(0, 1)
+                torch.manual_seed(0)
+                z_mean_proto = torch.randn(K, config.z1_size, device=args.device)  # (K, z_dim)
+            proto_p1, _ = model.p_x(z_mean_proto)            # (K, D), p1 = decoded mean
+        proto_arr = proto_p1.cpu().numpy().astype(np.float32)
+        out_path = args.export_pseudo_prototypes
+        os.makedirs(os.path.dirname(os.path.abspath(out_path)) or '.', exist_ok=True)
+        np.save(out_path, proto_arr)
+        print(f"PSEUDO_PROTOTYPES_PATH: {out_path}")
+        print(f"Wrote pseudo prototypes: shape {proto_arr.shape} → {out_path}")
 
     print("\nAll analyses complete.")
 
