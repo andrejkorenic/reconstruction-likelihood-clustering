@@ -66,6 +66,12 @@ g.add_argument('--out_z', type=str, default=None,
                help='override output path for --export_latents (default: '
                     '<model_dir>/z_mean.npy; use this to avoid overwriting the '
                     'training-set latents)')
+g.add_argument('--ood_recon_nll', type=str, default=None,
+               help='compute per-trace reconstruction NLL (Method E OOD score) '
+                    'with K MC samples from q(z|x) and save (N,) float32 array '
+                    'to this path; lower nats = more in-distribution')
+g.add_argument('--ood_K', type=int, default=10,
+               help='number of MC samples for --ood_recon_nll (default 10)')
 
 # --- Settings -------------------------------------------------------------
 g = parser.add_argument_group('Settings')
@@ -140,10 +146,11 @@ def main():
 
     # Check at least one analysis flag is set
     analysis_flags = ['cluster', 'recon_viz', 'generate', 'KNN', 'classify',
-                      'ood_scores', 'cyclic_generation', 'export_latents']
+                      'ood_scores', 'cyclic_generation', 'export_latents',
+                      'ood_recon_nll']
     if not any(getattr(args, f) for f in analysis_flags):
         print("Error: no analysis flag specified. Use one or more of:")
-        print("  --cluster --recon_viz --generate --KNN --classify --ood_scores --cyclic_generation --export_latents")
+        print("  --cluster --recon_viz --generate --KNN --classify --ood_scores --cyclic_generation --export_latents --ood_recon_nll")
         sys.exit(1)
 
     # Load model once
@@ -316,6 +323,54 @@ def main():
         np.save(out_path, z_mean)
         print(f"LATENTS_PATH: {out_path}")
         print(f"Exported z_mean: shape {z_mean.shape} → {out_path}")
+
+    if args.ood_recon_nll:
+        import re
+        import pandas as pd
+        # Reuse export_latents data-loading + normalisation; we only need x_all.
+        csv_path = getattr(config, 'csv_path', None)
+        parquet_path = args.parquet_override or getattr(config, 'parquet_path', None)
+        if not csv_path and not parquet_path:
+            print("Error: --ood_recon_nll requires --csv_path / --parquet_path "
+                  "in the trained config or --parquet_override")
+            sys.exit(1)
+
+        if parquet_path:
+            df = pd.read_parquet(parquet_path)
+            t_pat = re.compile(r"^t_\d+$")
+            t_cols = sorted(c for c in df.columns if t_pat.match(c))
+            x_all = df[t_cols].to_numpy(dtype=np.float32)
+            print(f"Encoding from parquet: {parquet_path} (shape {x_all.shape})")
+        else:
+            n_meta = getattr(config, 'csv_meta_cols', 2)
+            df = pd.read_csv(csv_path, sep='\t')
+            x_all = df.iloc[:, n_meta:].values.astype(np.float32)
+            print(f"Encoding from csv: {csv_path} (shape {x_all.shape})")
+        x_min, x_max = x_all.min(), x_all.max()
+        x_all = (x_all - x_min) / (x_max - x_min + 1e-7)
+
+        K = args.ood_K
+        nll_sum = np.zeros(len(x_all), dtype=np.float64)
+        tensor = torch.tensor(x_all, dtype=torch.float32)
+        with torch.no_grad():
+            for k in range(K):
+                parts = []
+                for i in range(0, len(tensor), args.batch_size):
+                    batch = tensor[i:i + args.batch_size].to(args.device)
+                    z_mean, z_logvar = model.q_z(batch)
+                    z = model.reparameterize(z_mean, z_logvar)
+                    x_param1, x_param2 = model.p_x(z)
+                    log_p_x = model.reconstruction_loss(batch, x_param1, x_param2)
+                    parts.append(log_p_x.cpu().numpy())
+                nll_sum += -np.concatenate(parts, axis=0)
+        nll_mean = (nll_sum / K).astype(np.float32)
+
+        out_path = args.ood_recon_nll
+        os.makedirs(os.path.dirname(os.path.abspath(out_path)) or '.', exist_ok=True)
+        np.save(out_path, nll_mean)
+        print(f"RECON_NLL_PATH: {out_path}")
+        print(f"Wrote per-trace recon NLL: shape {nll_mean.shape}, "
+              f"K={K}, mean={nll_mean.mean():.2f} nats → {out_path}")
 
     print("\nAll analyses complete.")
 
