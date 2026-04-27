@@ -72,6 +72,12 @@ g.add_argument('--ood_recon_nll', type=str, default=None,
                     'to this path; lower nats = more in-distribution')
 g.add_argument('--ood_K', type=int, default=10,
                help='number of MC samples for --ood_recon_nll (default 10)')
+g.add_argument('--ood_pseudo_recon', type=str, default=None,
+               help='Method E v2 OOD score: decode the K VampPrior '
+                    'pseudo-inputs into Beta distributions, score every '
+                    'test ROI against each prototype, save -max log p(x|k) '
+                    '(nats) and argmax k to <prefix>.nll.npy and '
+                    '<prefix>.cluster.npy')
 
 # --- Settings -------------------------------------------------------------
 g = parser.add_argument_group('Settings')
@@ -147,10 +153,10 @@ def main():
     # Check at least one analysis flag is set
     analysis_flags = ['cluster', 'recon_viz', 'generate', 'KNN', 'classify',
                       'ood_scores', 'cyclic_generation', 'export_latents',
-                      'ood_recon_nll']
+                      'ood_recon_nll', 'ood_pseudo_recon']
     if not any(getattr(args, f) for f in analysis_flags):
         print("Error: no analysis flag specified. Use one or more of:")
-        print("  --cluster --recon_viz --generate --KNN --classify --ood_scores --cyclic_generation --export_latents --ood_recon_nll")
+        print("  --cluster --recon_viz --generate --KNN --classify --ood_scores --cyclic_generation --export_latents --ood_recon_nll --ood_pseudo_recon")
         sys.exit(1)
 
     # Load model once
@@ -371,6 +377,80 @@ def main():
         print(f"RECON_NLL_PATH: {out_path}")
         print(f"Wrote per-trace recon NLL: shape {nll_mean.shape}, "
               f"K={K}, mean={nll_mean.mean():.2f} nats → {out_path}")
+
+    if args.ood_pseudo_recon:
+        import re
+        import pandas as pd
+        # Reuse export_latents data-loading + normalisation; we only need x_all.
+        csv_path = getattr(config, 'csv_path', None)
+        parquet_path = args.parquet_override or getattr(config, 'parquet_path', None)
+        if not csv_path and not parquet_path:
+            print("Error: --ood_pseudo_recon requires --csv_path / --parquet_path "
+                  "in the trained config or --parquet_override")
+            sys.exit(1)
+
+        if parquet_path:
+            df = pd.read_parquet(parquet_path)
+            t_pat = re.compile(r"^t_\d+$")
+            t_cols = sorted(c for c in df.columns if t_pat.match(c))
+            x_all = df[t_cols].to_numpy(dtype=np.float32)
+            print(f"Encoding from parquet: {parquet_path} (shape {x_all.shape})")
+        else:
+            n_meta = getattr(config, 'csv_meta_cols', 2)
+            df = pd.read_csv(csv_path, sep='\t')
+            x_all = df.iloc[:, n_meta:].values.astype(np.float32)
+            print(f"Encoding from csv: {csv_path} (shape {x_all.shape})")
+        x_min, x_max = x_all.min(), x_all.max()
+        x_all = (x_all - x_min) / (x_max - x_min + 1e-7)
+
+        # Obtain K prototype latent vectors: VampPrior pseudo-inputs when
+        # available, otherwise K-means on all-data latent means (standard prior).
+        K = config.number_components
+        with torch.no_grad():
+            if hasattr(model, 'means') and hasattr(model, 'idle_input'):
+                # VampPrior: decode learned pseudo-inputs
+                pseudo_x = model.means(model.idle_input)     # (K, D)
+                z_mean_proto, _ = model.q_z(pseudo_x)        # (K, z_dim)
+            else:
+                # Standard/exemplar prior: encode all data, then K-means
+                from sklearn.cluster import KMeans
+                tensor_enc = torch.tensor(x_all, dtype=torch.float32)
+                z_parts = []
+                for i in range(0, len(x_all), args.batch_size):
+                    b = tensor_enc[i:i + args.batch_size].to(args.device)
+                    zm, _ = model.q_z(b)
+                    z_parts.append(zm.cpu().numpy())
+                z_all_np = np.concatenate(z_parts, axis=0)
+                km = KMeans(n_clusters=K, random_state=0, n_init='auto').fit(z_all_np)
+                z_mean_proto = torch.tensor(km.cluster_centers_,
+                                            dtype=torch.float32).to(args.device)
+            proto_p1, proto_p2 = model.p_x(z_mean_proto)    # (K, D), (K, D)
+
+        # Score every test ROI against every prototype
+        N = len(x_all)
+        scores = np.zeros((N, K), dtype=np.float32)
+        tensor = torch.tensor(x_all, dtype=torch.float32)
+        with torch.no_grad():
+            for i in range(0, N, args.batch_size):
+                batch = tensor[i:i + args.batch_size].to(args.device)  # (b, D)
+                b = batch.size(0)
+                for k in range(K):
+                    p1_k = proto_p1[k:k+1].expand(b, -1).contiguous()
+                    p2_k = proto_p2[k:k+1].expand(b, -1).contiguous()
+                    log_p = model.reconstruction_loss(batch, p1_k, p2_k)  # (b,)
+                    scores[i:i+b, k] = log_p.cpu().numpy()
+        nll = (-scores.max(axis=1)).astype(np.float32)
+        cluster = scores.argmax(axis=1).astype(np.int32)
+
+        prefix = args.ood_pseudo_recon
+        out_dir_pr = os.path.dirname(os.path.abspath(prefix)) or '.'
+        os.makedirs(out_dir_pr, exist_ok=True)
+        np.save(prefix + '.nll.npy', nll)
+        np.save(prefix + '.cluster.npy', cluster)
+        print(f"PSEUDO_RECON_PREFIX: {prefix}")
+        print(f"Wrote pseudo-input recon: shape ({N},), K={K}, "
+              f"NLL mean={nll.mean():.2f}, "
+              f"unique clusters used: {len(np.unique(cluster))}/{K}")
 
     print("\nAll analyses complete.")
 
