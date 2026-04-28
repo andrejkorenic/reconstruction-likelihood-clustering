@@ -33,9 +33,9 @@ def trained_model_dir(tmp_path_factory):
     # Run training via subprocess from tmp_path (pretrained_models/ created there)
     result = subprocess.run(
         [sys.executable, os.path.join(REPO_ROOT, 'run.py'),
-         '--dataset_name', 'csv_timeseries',
-         '--csv_path', str(tsv_path),
-         '--csv_meta_cols', '0',
+         '--dataset_name', 'tabular_timeseries',
+         '--ts_path', str(tsv_path),
+         '--ts_value_cols', r'^\d+$',
          '--model_name', 'timeseries_vae',
          '--epochs', '2',
          '--warmup', '0',

@@ -58,10 +58,10 @@ g.add_argument('--cyclic_generation', action='store_true', default=False,
                help='cyclic generation through latent space')
 g.add_argument('--export_latents', action='store_true', default=False,
                help='encode all input rows → z_mean.npy (preserves original row order)')
-g.add_argument('--parquet_override', type=str, default=None,
-               help='override config.parquet_path for --export_latents; encodes '
-                    'an arbitrary parquet through the trained model (e.g. a full '
-                    'cohort including groups the model was not trained on)')
+g.add_argument('--ts_path_override', type=str, default=None,
+               help='override config.ts_path for --export_latents / --ood_recon_nll '
+                    '/ --ood_pseudo_recon; encodes an arbitrary csv/parquet/npy '
+                    '(e.g. a full cohort) through the trained model')
 g.add_argument('--out_z', type=str, default=None,
                help='override output path for --export_latents (default: '
                     '<model_dir>/z_mean.npy; use this to avoid overwriting the '
@@ -111,6 +111,58 @@ args.device = torch.device("cuda" if args.cuda else "cpu")
 torch.manual_seed(args.seed)
 if args.cuda:
     torch.cuda.manual_seed(args.seed)
+
+
+# ======================================================================
+# Tabular-timeseries data loading for analysis (DRY helper)
+# ======================================================================
+def _load_tabular_for_analysis(config):
+    """Load the trained model's source data (or a --ts_path_override) for
+    analysis-time encoding.
+
+    Returns x_all: (N, T) float32 in original row order, normalised per
+    config.ts_normalise. No shuffle, no train/val/test split — analyse
+    every row.
+
+    The path priority is: args.ts_path_override → config.ts_path →
+    config.ts_*_path trio's train file.
+    """
+    from utils.load_data.timeseries_loader import tabular_timeseries_loader
+    import argparse
+
+    override = getattr(args, 'ts_path_override', None)
+    train_path = getattr(config, 'ts_train_path', None)
+    path = override or getattr(config, 'ts_path', None) or train_path
+    if not path:
+        print("Error: analysis requires --ts_path_override or a model trained "
+              "with --ts_path / --ts_train_path.")
+        sys.exit(1)
+
+    # Build a Namespace mirroring the loader's expected --ts_* fields.
+    # Pull values from the trained config (so column selection, separator, etc.
+    # match training time) but leave path-related fields tied to the analysis path.
+    ns = argparse.Namespace(
+        ts_path=path,
+        ts_train_path=None, ts_val_path=None, ts_test_path=None,
+        ts_format=getattr(config, 'ts_format', 'auto'),
+        ts_csv_sep=getattr(config, 'ts_csv_sep', ','),
+        ts_value_cols=getattr(config, 'ts_value_cols', None),
+        ts_label_col=None,  # not needed for analysis-time encoding
+        ts_normalise=getattr(config, 'ts_normalise', 'global_minmax'),
+        seed=getattr(config, 'seed', 42),
+        training_set_size=0,
+    )
+    loader = tabular_timeseries_loader(ns)
+    x, _ = loader._load_one(path)
+    print(f"Encoding from {path} (shape {x.shape}, normalise={ns.ts_normalise})")
+
+    # Re-apply the same normalisation mode using current data's statistics.
+    # For global_minmax/zscore this means stats computed from the analysis
+    # input (which may differ from training-time stats if --ts_path_override
+    # is used). per_sample_minmax is row-local; 'none' is a passthrough.
+    empty = np.empty((0, x.shape[1]), dtype=np.float32)
+    x_norm, _, _ = loader._normalise(x, empty, empty)
+    return x_norm
 
 
 # ======================================================================
@@ -303,32 +355,7 @@ def main():
         print(f"Cyclic generation saved to {directory}cyclic_generation.png")
 
     if args.export_latents:
-        import re
-        import pandas as pd
-        csv_path = getattr(config, 'csv_path', None)
-        # Parquet source: explicit --parquet_override wins over the training
-        # config's parquet_path. This lets us encode an arbitrary ROI set
-        # (e.g. full cohort) through a model that was trained on a subset.
-        parquet_path = args.parquet_override or getattr(config, 'parquet_path', None)
-        if not csv_path and not parquet_path:
-            print("Error: --export_latents requires a model trained with --csv_path or --parquet_path, "
-                  "or --parquet_override pointing to a parquet file")
-            sys.exit(1)
-
-        if parquet_path:
-            # parquet_timeseries: sample columns match 't_<digits>'; rest is meta
-            df = pd.read_parquet(parquet_path)
-            t_pat = re.compile(r"^t_\d+$")
-            t_cols = sorted(c for c in df.columns if t_pat.match(c))
-            x_all = df[t_cols].to_numpy(dtype=np.float32)
-            print(f"Encoding from parquet: {parquet_path} (shape {x_all.shape})")
-        else:
-            n_meta = getattr(config, 'csv_meta_cols', 2)
-            df = pd.read_csv(csv_path, sep='\t')
-            x_all = df.iloc[:, n_meta:].values.astype(np.float32)
-            print(f"Encoding from csv: {csv_path} (shape {x_all.shape})")
-        x_min, x_max = x_all.min(), x_all.max()
-        x_all = (x_all - x_min) / (x_max - x_min + 1e-7)
+        x_all = _load_tabular_for_analysis(config)
 
         # Encode all rows in original order, matching training normalisation
         parts = []
@@ -347,29 +374,7 @@ def main():
         print(f"Exported z_mean: shape {z_mean.shape} → {out_path}")
 
     if args.ood_recon_nll:
-        import re
-        import pandas as pd
-        # Reuse export_latents data-loading + normalisation; we only need x_all.
-        csv_path = getattr(config, 'csv_path', None)
-        parquet_path = args.parquet_override or getattr(config, 'parquet_path', None)
-        if not csv_path and not parquet_path:
-            print("Error: --ood_recon_nll requires --csv_path / --parquet_path "
-                  "in the trained config or --parquet_override")
-            sys.exit(1)
-
-        if parquet_path:
-            df = pd.read_parquet(parquet_path)
-            t_pat = re.compile(r"^t_\d+$")
-            t_cols = sorted(c for c in df.columns if t_pat.match(c))
-            x_all = df[t_cols].to_numpy(dtype=np.float32)
-            print(f"Encoding from parquet: {parquet_path} (shape {x_all.shape})")
-        else:
-            n_meta = getattr(config, 'csv_meta_cols', 2)
-            df = pd.read_csv(csv_path, sep='\t')
-            x_all = df.iloc[:, n_meta:].values.astype(np.float32)
-            print(f"Encoding from csv: {csv_path} (shape {x_all.shape})")
-        x_min, x_max = x_all.min(), x_all.max()
-        x_all = (x_all - x_min) / (x_max - x_min + 1e-7)
+        x_all = _load_tabular_for_analysis(config)
 
         K = args.ood_K
         nll_sum = np.zeros(len(x_all), dtype=np.float64)
@@ -395,29 +400,7 @@ def main():
               f"K={K}, mean={nll_mean.mean():.2f} nats → {out_path}")
 
     if args.ood_pseudo_recon:
-        import re
-        import pandas as pd
-        # Reuse export_latents data-loading + normalisation; we only need x_all.
-        csv_path = getattr(config, 'csv_path', None)
-        parquet_path = args.parquet_override or getattr(config, 'parquet_path', None)
-        if not csv_path and not parquet_path:
-            print("Error: --ood_pseudo_recon requires --csv_path / --parquet_path "
-                  "in the trained config or --parquet_override")
-            sys.exit(1)
-
-        if parquet_path:
-            df = pd.read_parquet(parquet_path)
-            t_pat = re.compile(r"^t_\d+$")
-            t_cols = sorted(c for c in df.columns if t_pat.match(c))
-            x_all = df[t_cols].to_numpy(dtype=np.float32)
-            print(f"Encoding from parquet: {parquet_path} (shape {x_all.shape})")
-        else:
-            n_meta = getattr(config, 'csv_meta_cols', 2)
-            df = pd.read_csv(csv_path, sep='\t')
-            x_all = df.iloc[:, n_meta:].values.astype(np.float32)
-            print(f"Encoding from csv: {csv_path} (shape {x_all.shape})")
-        x_min, x_max = x_all.min(), x_all.max()
-        x_all = (x_all - x_min) / (x_max - x_min + 1e-7)
+        x_all = _load_tabular_for_analysis(config)
 
         # Obtain K prototype latent vectors: VampPrior pseudo-inputs when
         # available, otherwise K-means on all-data latent means (standard prior).
