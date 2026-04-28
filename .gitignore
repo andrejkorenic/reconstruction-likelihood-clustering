@@ -211,7 +211,8 @@ datasets/*
 pretrained_models/*
 !pretrained_models/.gitkeep
 benchmarks/
-docs/
+docs/*
+!docs/superpowers/
 local/
 snapshots/
 .superpowers/
