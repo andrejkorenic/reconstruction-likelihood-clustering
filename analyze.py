@@ -116,7 +116,7 @@ if args.cuda:
 # ======================================================================
 # Model loading
 # ======================================================================
-def _load_pretrained_models(model_dir):
+def _load_pretrained_models(model_dir, skip_data_loading=False):
     """Load a pretrained model, its config, and data loaders from a timestamp directory.
 
     Returns (model, config, train_loader, val_loader, test_loader).
@@ -135,8 +135,13 @@ def _load_pretrained_models(model_dir):
     VAE = importing_model(config)
     model = VAE(config)
     model.to(args.device)
-    train_loader, val_loader, test_loader, config = load_dataset(
-        config, training_num=args.training_set_size, no_binarization=True)
+
+    if not skip_data_loading:
+        train_loader, val_loader, test_loader, config = load_dataset(
+            config, training_num=args.training_set_size, no_binarization=True)
+    else:
+        train_loader, val_loader, test_loader = None, None, None
+
     load_model(model_dir + 'checkpoint_best.pth', model)
     model.eval()
     return model, config, train_loader, val_loader, test_loader
@@ -167,7 +172,12 @@ def main():
 
     # Load model once
     print(f"Loading model from {directory}...")
-    model, config, train_loader, val_loader, test_loader = _load_pretrained_models(directory)
+    # Skip data loading if only exporting pseudo prototypes (doesn't need dataset)
+    skip_data_loading = (args.export_pseudo_prototypes is not None and
+                         not any(getattr(args, f) for f in ['cluster', 'recon_viz', 'generate',
+                                                             'KNN', 'classify', 'ood_scores',
+                                                             'cyclic_generation', 'export_latents']))
+    model, config, train_loader, val_loader, test_loader = _load_pretrained_models(directory, skip_data_loading=skip_data_loading)
     args.input_type = config.input_type
     args.input_size = config.input_size
 
