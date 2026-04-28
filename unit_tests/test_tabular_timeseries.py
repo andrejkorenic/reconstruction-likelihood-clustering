@@ -535,3 +535,138 @@ class TestNormalisation:
         x_train, x_val, x_test = self._three_splits()
         with pytest.raises(SystemExit):
             loader._normalise(x_train, x_val, x_test)
+
+
+# ======================================================================
+# Full load_dataset orchestration
+# ======================================================================
+def _build_csv_dataset(path, n_rows=100, n_t=10):
+    rng = np.random.default_rng(0)
+    cols = {f't_{i}': rng.random(n_rows).astype(np.float32) for i in range(n_t)}
+    cols['group'] = ['A' if i % 3 == 0 else 'B' for i in range(n_rows)]
+    pd.DataFrame(cols).to_csv(path, index=False)
+
+
+class TestLoadDatasetOrchestration:
+    def test_single_file_full_load(self, tmp_path):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        path = tmp_path / "d.csv"
+        _build_csv_dataset(path, n_rows=100, n_t=10)
+        args = _make_args(
+            ts_path=str(path),
+            ts_value_cols=r'^t_\d+$',
+            ts_normalise='global_minmax',
+            seed=42,
+            number_components=8,
+        )
+        loader = tabular_timeseries_loader(args)
+        train_loader, val_loader, test_loader, out_args = loader.load_dataset()
+
+        # Loader tuple contract
+        assert train_loader is not None and val_loader is not None and test_loader is not None
+        assert len(train_loader.dataset) == 80
+        assert len(val_loader.dataset) == 10
+        assert len(test_loader.dataset) == 10
+
+        # Args runtime fields
+        assert out_args.seq_len == 10
+        assert out_args.feat_dim == 1
+        assert out_args.input_size == [1, 10]
+        assert out_args.input_type == 'continuous'
+        assert out_args.training_set_size == 80
+        assert out_args.dynamic_binarization is False
+
+    def test_train_loader_yields_3_tuple(self, tmp_path):
+        """base_load_data.post_processing wraps train data with sample indices."""
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        path = tmp_path / "d.csv"
+        _build_csv_dataset(path, n_rows=64, n_t=8)
+        args = _make_args(ts_path=str(path), ts_value_cols=r'^t_\d+$')
+        loader = tabular_timeseries_loader(args)
+        train_loader, _, _, _ = loader.load_dataset()
+        batch = next(iter(train_loader))
+        assert len(batch) == 3, f"expected (x, idx, y), got {len(batch)}-tuple"
+
+    def test_val_test_loaders_yield_2_tuple(self, tmp_path):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        path = tmp_path / "d.csv"
+        _build_csv_dataset(path, n_rows=64, n_t=8)
+        args = _make_args(ts_path=str(path), ts_value_cols=r'^t_\d+$')
+        loader = tabular_timeseries_loader(args)
+        _, val_loader, test_loader, _ = loader.load_dataset()
+        for ld in (val_loader, test_loader):
+            batch = next(iter(ld))
+            assert len(batch) == 2, f"expected (x, y), got {len(batch)}-tuple"
+
+    def test_pre_split_mixed_formats(self, tmp_path):
+        """train.csv + val.parquet + test.npy: each file resolved by own extension."""
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        train_path = tmp_path / "tr.csv"
+        val_path = tmp_path / "va.parquet"
+        test_path = tmp_path / "te.npy"
+        # train as csv with t_0..t_4 + meta
+        rng = np.random.default_rng(0)
+        df_train = pd.DataFrame({
+            **{f't_{i}': rng.random(20).astype(np.float32) for i in range(5)},
+            'group': ['x'] * 20,
+        })
+        df_train.to_csv(train_path, index=False)
+        # val as parquet, same value columns
+        df_val = pd.DataFrame({
+            **{f't_{i}': rng.random(5).astype(np.float32) for i in range(5)},
+            'group': ['x'] * 5,
+        })
+        df_val.to_parquet(val_path)
+        # test as npy: 5 rows × 5 timesteps
+        np.save(test_path, rng.random((5, 5)).astype(np.float32))
+
+        args = _make_args(
+            ts_train_path=str(train_path),
+            ts_val_path=str(val_path),
+            ts_test_path=str(test_path),
+            ts_value_cols=r'^t_\d+$',
+        )
+        loader = tabular_timeseries_loader(args)
+        train_ld, val_ld, test_ld, out_args = loader.load_dataset()
+        assert len(train_ld.dataset) == 20
+        assert len(val_ld.dataset) == 5
+        assert len(test_ld.dataset) == 5
+        assert out_args.seq_len == 5
+
+    def test_pre_split_T_mismatch(self, tmp_path):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        train_path = tmp_path / "tr.csv"
+        val_path = tmp_path / "va.csv"
+        test_path = tmp_path / "te.csv"
+        rng = np.random.default_rng(0)
+        # train T=5
+        pd.DataFrame({f't_{i}': rng.random(20) for i in range(5)}).to_csv(train_path, index=False)
+        # val T=4 (mismatch!)
+        pd.DataFrame({f't_{i}': rng.random(5) for i in range(4)}).to_csv(val_path, index=False)
+        pd.DataFrame({f't_{i}': rng.random(5) for i in range(5)}).to_csv(test_path, index=False)
+
+        args = _make_args(
+            ts_train_path=str(train_path), ts_val_path=str(val_path),
+            ts_test_path=str(test_path), ts_value_cols=r'^t_\d+$',
+        )
+        loader = tabular_timeseries_loader(args)
+        with pytest.raises(SystemExit):
+            loader.load_dataset()
+
+    def test_label_propagates_to_loaders(self, tmp_path):
+        """--ts_label_col actually flows through to the y tensors of the loaders."""
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        path = tmp_path / "d.csv"
+        _build_csv_dataset(path, n_rows=60, n_t=5)  # group alternates A/B (mod 3)
+        args = _make_args(
+            ts_path=str(path),
+            ts_value_cols=r'^t_\d+$',
+            ts_label_col='group',
+        )
+        loader = tabular_timeseries_loader(args)
+        train_ld, _, _, _ = loader.load_dataset()
+        # collect all train labels
+        labels = []
+        for batch in train_ld:
+            labels.extend(batch[-1].numpy().tolist())
+        assert set(labels) == {0, 1}, "expected two distinct factorised labels"

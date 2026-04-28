@@ -630,3 +630,77 @@ class tabular_timeseries_loader(base_load_data):
             f"--ts_normalise must be one of "
             f"{{global_minmax, per_sample_minmax, zscore, none}}, got '{mode}'"
         )
+
+    # ----------------------------------------------------------------
+    # Per-file end-to-end load (used by both single and trio modes)
+    # ----------------------------------------------------------------
+    def _load_one(self, path):
+        """Load a single file into (x: (N, T) float32, y: (N,) int64).
+
+        Format auto-detected per file — pre-split mode can mix formats
+        (train.csv + val.parquet + test.npy) because each file's format
+        is resolved independently.
+        """
+        fmt = self._resolve_format(path)
+        if fmt == 'npy':
+            x = self._load_npy(path)
+            # npy has no column names → labels default to zeros
+            y = np.zeros(len(x), dtype=np.int64)
+        else:
+            df = self._load_dataframe(path, fmt)
+            x, _ = self._select_value_cols(df)
+            y = self._extract_labels(df, n=len(df))
+        return x, y
+
+    # ----------------------------------------------------------------
+    # Full orchestration: parse paths → load → split → normalise → DataLoader
+    # ----------------------------------------------------------------
+    def load_dataset(self, **kwargs):
+        kind, paths = self._resolve_paths()
+
+        if kind == 'single':
+            x, y = self._load_one(paths)
+            (x_train, y_train), (x_val, y_val), (x_test, y_test) = \
+                self._split_single(x, y, getattr(self.args, 'ts_split', '0.8/0.1/0.1'))
+        else:
+            x_train, y_train = self._load_one(paths[0])
+            x_val, y_val = self._load_one(paths[1])
+            x_test, y_test = self._load_one(paths[2])
+            # Pre-split T-consistency — TimeSeriesVAE input dimension is fixed by training.
+            T_train = x_train.shape[1]
+            for name, x in (('val', x_val), ('test', x_test)):
+                if x.shape[1] != T_train:
+                    sys.exit(
+                        f"pre-split files disagree on sequence length T: "
+                        f"train T={T_train}, {name} T={x.shape[1]}"
+                    )
+
+        # Normalise (train statistics only)
+        x_train, x_val, x_test = self._normalise(x_train, x_val, x_test)
+
+        # Args runtime fields (consumed by run.py / model construction downstream)
+        T = x_train.shape[1]
+        feat_dim = 1
+        self.args.seq_len = T
+        self.args.feat_dim = feat_dim
+        self.args.input_size = [feat_dim, T]
+        self.args.input_type = 'continuous'
+        self.args.use_logit = False
+        self.args.dynamic_binarization = False
+        self.args.training_set_size = len(x_train)
+
+        # Flat (N, T) layout matches base_load_data.post_processing expectations
+        x_train = x_train.reshape(-1, feat_dim * T)
+        x_val = x_val.reshape(-1, feat_dim * T)
+        x_test = x_test.reshape(-1, feat_dim * T)
+
+        print("Tabular time-series data stats:")
+        print(f"  Source: {paths}")
+        print(f"  Train: {len(x_train)}, Val: {len(x_val)}, Test: {len(x_test)}")
+        print(f"  Seq length: {T}, Features: {feat_dim}")
+        print(f"  Normalisation: {getattr(self.args, 'ts_normalise', 'global_minmax')}")
+
+        train_loader, val_loader, test_loader = self.post_processing(
+            x_train, x_val, x_test, y_train, y_val, y_test, **kwargs)
+
+        return train_loader, val_loader, test_loader, self.args
