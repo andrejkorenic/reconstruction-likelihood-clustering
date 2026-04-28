@@ -6,12 +6,15 @@ import argparse
 import csv
 import os
 import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
 
 from models.HVAE_2level import VAE as HVAE_2level
+
+REPO_ROOT = str(Path(__file__).resolve().parents[1])
 
 
 # ======================================================================================================================
@@ -293,7 +296,7 @@ class TestCLIIntegration:
         result = subprocess.run(
             [sys.executable, 'analyze.py', '--help'],
             capture_output=True, text=True, timeout=10,
-            cwd='/home/andrej/Documents/programiranje/new_vae_bundle'
+            cwd=REPO_ROOT
         )
         assert result.returncode == 0
         assert '--ood_scores' in result.stdout
@@ -304,7 +307,7 @@ class TestCLIIntegration:
         result = subprocess.run(
             [sys.executable, 'analyze.py', '--help'],
             capture_output=True, text=True, timeout=10,
-            cwd='/home/andrej/Documents/programiranje/new_vae_bundle'
+            cwd=REPO_ROOT
         )
         assert result.returncode == 0
         assert '--ood_dataset' in result.stdout

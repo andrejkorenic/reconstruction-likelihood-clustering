@@ -2,11 +2,12 @@
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
 
-VAE_DIR = '/home/andrej/Documents/programiranje/new_vae_bundle'
+REPO_ROOT = str(Path(__file__).resolve().parents[1])
 
 
 @pytest.fixture(scope="session")
@@ -23,7 +24,7 @@ def trained_model_dir(tmp_path_factory):
                comments='')
 
     result = subprocess.run(
-        [sys.executable, os.path.join(VAE_DIR, 'run.py'),
+        [sys.executable, os.path.join(REPO_ROOT, 'run.py'),
          '--dataset_name', 'csv_timeseries',
          '--csv_path', str(tsv_path),
          '--csv_meta_cols', '0',
@@ -39,7 +40,7 @@ def trained_model_dir(tmp_path_factory):
          '--seed', '42'],
         capture_output=True, text=True,
         cwd=str(tmp_path),
-        env={**os.environ, 'PYTHONPATH': VAE_DIR},
+        env={**os.environ, 'PYTHONPATH': REPO_ROOT},
     )
     assert result.returncode == 0, f"Training failed:\n{result.stderr}"
 
@@ -60,13 +61,13 @@ def export_result(trained_model_dir, tmp_path_factory):
     cwd = tmp_path_factory.mktemp("export_protos_run")
     out = cwd / "protos.npy"
     res = subprocess.run(
-        [sys.executable, os.path.join(VAE_DIR, 'analyze.py'),
+        [sys.executable, os.path.join(REPO_ROOT, 'analyze.py'),
          '--dir', model_dir,
          '--export_pseudo_prototypes', str(out),
          '--no-cuda'],
         capture_output=True, text=True,
         cwd=str(cwd),
-        env={**os.environ, 'PYTHONPATH': VAE_DIR},
+        env={**os.environ, 'PYTHONPATH': REPO_ROOT},
     )
     return res, out
 

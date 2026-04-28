@@ -3,12 +3,13 @@ import os
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 
 import numpy as np
 import pytest
 import torch
 
-VAE_DIR = '/home/andrej/Documents/programiranje/new_vae_bundle'
+REPO_ROOT = str(Path(__file__).resolve().parents[1])
 
 
 @pytest.fixture(scope="session")
@@ -31,7 +32,7 @@ def trained_model_dir(tmp_path_factory):
 
     # Run training via subprocess from tmp_path (pretrained_models/ created there)
     result = subprocess.run(
-        [sys.executable, os.path.join(VAE_DIR, 'run.py'),
+        [sys.executable, os.path.join(REPO_ROOT, 'run.py'),
          '--dataset_name', 'csv_timeseries',
          '--csv_path', str(tsv_path),
          '--csv_meta_cols', '0',
@@ -46,7 +47,7 @@ def trained_model_dir(tmp_path_factory):
          '--seed', '42'],
         capture_output=True, text=True,
         cwd=str(tmp_path),
-        env={**os.environ, 'PYTHONPATH': VAE_DIR},
+        env={**os.environ, "PYTHONPATH": REPO_ROOT},
     )
     assert result.returncode == 0, f"Training failed:\n{result.stderr}"
 
@@ -70,26 +71,26 @@ def export_result(trained_model_dir, tmp_path_factory):
     model_dir, tsv_path, n_rows = trained_model_dir
     cwd = tmp_path_factory.mktemp("export")
     return subprocess.run(
-        [sys.executable, os.path.join(VAE_DIR, 'analyze.py'),
+        [sys.executable, os.path.join(REPO_ROOT, 'analyze.py'),
          '--dir', model_dir,
          '--export_latents',
          '--no-cuda'],
         capture_output=True, text=True,
         cwd=str(cwd),
-        env={**os.environ, 'PYTHONPATH': VAE_DIR},
+        env={**os.environ, "PYTHONPATH": REPO_ROOT},
     )
 
 
 def _run_export(model_dir, cwd):
     """Helper: run analyze.py --export_latents."""
     return subprocess.run(
-        [sys.executable, os.path.join(VAE_DIR, 'analyze.py'),
+        [sys.executable, os.path.join(REPO_ROOT, 'analyze.py'),
          '--dir', model_dir,
          '--export_latents',
          '--no-cuda'],
         capture_output=True, text=True,
         cwd=str(cwd),
-        env={**os.environ, 'PYTHONPATH': VAE_DIR},
+        env={**os.environ, "PYTHONPATH": REPO_ROOT},
     )
 
 

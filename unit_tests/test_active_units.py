@@ -1,6 +1,7 @@
 """Tests for Active Units computation and monitoring."""
 
 import argparse
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -8,6 +9,8 @@ import torch
 import torch.nn as nn
 
 from utils.evaluation import compute_mean_variance_per_dimension
+
+REPO_ROOT = str(Path(__file__).resolve().parents[1])
 
 
 class FakeEncoder(nn.Module):
@@ -173,7 +176,7 @@ def test_auto_z_size_args_are_parsed():
     result = subprocess.run(
         [sys.executable, 'run.py', '--help'],
         capture_output=True, text=True,
-        cwd='/home/andrej/Documents/programiranje/new_vae_bundle',
+        cwd=REPO_ROOT,
     )
     assert '--auto_z_size' in result.stdout
     assert '--au_check_interval' in result.stdout
