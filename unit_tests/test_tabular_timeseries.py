@@ -112,3 +112,127 @@ class TestFormatDetection:
         args = _make_args(ts_path='data.csv', ts_csv_sep=';')
         loader = tabular_timeseries_loader(args)
         assert loader._effective_csv_sep('data.csv') == ';'
+
+
+# ======================================================================
+# Column selection (csv / parquet)
+# ======================================================================
+def _csv_with_value_and_meta(path, n_rows=8, n_t=5, sep=','):
+    """Build a small TSV/CSV fixture: t_0..t_{n_t-1} + extra metadata cols."""
+    rng = np.random.default_rng(0)
+    cols = {f't_{i}': rng.random(n_rows).astype(np.float32) for i in range(n_t)}
+    cols['subject_id'] = [f's{i % 3}' for i in range(n_rows)]
+    cols['group'] = ['ALS' if i % 2 == 0 else 'CTRL' for i in range(n_rows)]
+    cols['time_start_sec'] = rng.random(n_rows)  # collision trap for naive 't_' prefix
+    df = pd.DataFrame(cols)
+    df.to_csv(path, sep=sep, index=False)
+    return df, [f't_{i}' for i in range(n_t)]
+
+
+def _parquet_with_value_and_meta(path, n_rows=8, n_t=5):
+    rng = np.random.default_rng(1)
+    cols = {f't_{i}': rng.random(n_rows).astype(np.float32) for i in range(n_t)}
+    cols['subject_id'] = [f's{i % 3}' for i in range(n_rows)]
+    cols['group'] = ['ALS' if i % 2 == 0 else 'CTRL' for i in range(n_rows)]
+    cols['time_start_sec'] = rng.random(n_rows)
+    df = pd.DataFrame(cols)
+    df.to_parquet(path)
+    return df, [f't_{i}' for i in range(n_t)]
+
+
+class TestColumnSelection:
+    def test_regex_value_cols_csv(self, tmp_path):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        path = tmp_path / "d.csv"
+        df, expected = _csv_with_value_and_meta(path)
+        args = _make_args(ts_path=str(path), ts_value_cols=r'^t_\d+$')
+        loader = tabular_timeseries_loader(args)
+        df_loaded = loader._load_dataframe(str(path), 'csv')
+        x, cols = loader._select_value_cols(df_loaded)
+        assert cols == expected
+        assert x.shape == (8, 5)
+        assert x.dtype == np.float32
+
+    def test_regex_value_cols_parquet(self, tmp_path):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        path = tmp_path / "d.parquet"
+        df, expected = _parquet_with_value_and_meta(path)
+        args = _make_args(ts_path=str(path), ts_value_cols=r'^t_\d+$')
+        loader = tabular_timeseries_loader(args)
+        df_loaded = loader._load_dataframe(str(path), 'parquet')
+        x, cols = loader._select_value_cols(df_loaded)
+        assert cols == expected
+        assert x.shape == (8, 5)
+
+    def test_explicit_list_value_cols(self, tmp_path):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        path = tmp_path / "d.csv"
+        df, _ = _csv_with_value_and_meta(path)
+        args = _make_args(ts_path=str(path), ts_value_cols='t_2,t_0,t_4')
+        loader = tabular_timeseries_loader(args)
+        df_loaded = loader._load_dataframe(str(path), 'csv')
+        x, cols = loader._select_value_cols(df_loaded)
+        # Sorted by name → deterministic
+        assert cols == ['t_0', 't_2', 't_4']
+        assert x.shape == (8, 3)
+
+    def test_regex_no_match(self, tmp_path):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        path = tmp_path / "d.csv"
+        _csv_with_value_and_meta(path)
+        args = _make_args(ts_path=str(path), ts_value_cols=r'^xyz_\d+$')
+        loader = tabular_timeseries_loader(args)
+        df = loader._load_dataframe(str(path), 'csv')
+        with pytest.raises(SystemExit):
+            loader._select_value_cols(df)
+
+    def test_explicit_list_missing_col(self, tmp_path):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        path = tmp_path / "d.csv"
+        _csv_with_value_and_meta(path)
+        args = _make_args(ts_path=str(path), ts_value_cols='t_0,nonexistent_col,t_2')
+        loader = tabular_timeseries_loader(args)
+        df = loader._load_dataframe(str(path), 'csv')
+        with pytest.raises(SystemExit):
+            loader._select_value_cols(df)
+
+    def test_missing_value_cols_for_csv(self, tmp_path):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        path = tmp_path / "d.csv"
+        _csv_with_value_and_meta(path)
+        args = _make_args(ts_path=str(path), ts_value_cols=None)
+        loader = tabular_timeseries_loader(args)
+        df = loader._load_dataframe(str(path), 'csv')
+        with pytest.raises(SystemExit):
+            loader._select_value_cols(df)
+
+    def test_value_cols_deterministic_order(self, tmp_path):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        # write columns in scrambled order
+        path = tmp_path / "d.csv"
+        rng = np.random.default_rng(0)
+        df = pd.DataFrame({
+            't_3': rng.random(4),
+            't_0': rng.random(4),
+            't_2': rng.random(4),
+            't_1': rng.random(4),
+        })
+        df.to_csv(path, index=False)
+        args = _make_args(ts_path=str(path), ts_value_cols=r'^t_\d+$')
+        loader = tabular_timeseries_loader(args)
+        df_loaded = loader._load_dataframe(str(path), 'csv')
+        _, cols = loader._select_value_cols(df_loaded)
+        assert cols == ['t_0', 't_1', 't_2', 't_3']
+
+    def test_csv_sep_tsv(self, tmp_path):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        path = tmp_path / "d.tsv"
+        df, expected = _csv_with_value_and_meta(path, sep='\t')
+        args = _make_args(ts_path=str(path), ts_value_cols=r'^t_\d+$')
+        loader = tabular_timeseries_loader(args)
+        df_loaded = loader._load_dataframe(str(path), 'csv')
+        # If sep is wrong, the entire row collapses into a single column
+        # and our regex won't match anything.
+        x, cols = loader._select_value_cols(df_loaded)
+        assert cols == expected
+        assert x.shape == (8, 5)

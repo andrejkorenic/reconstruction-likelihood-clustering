@@ -423,3 +423,64 @@ class tabular_timeseries_loader(base_load_data):
         if sep == ',' and str(path).lower().endswith('.tsv'):
             return '\t'
         return sep
+
+    # ----------------------------------------------------------------
+    # File loading
+    # ----------------------------------------------------------------
+    def _load_dataframe(self, path, fmt):
+        """Read a csv/tsv or parquet file into a DataFrame.
+
+        npy files do not go through this method — they're loaded
+        directly in load_dataset() via np.load.
+        """
+        import pandas as pd
+        if fmt == 'csv':
+            return pd.read_csv(path, sep=self._effective_csv_sep(path))
+        if fmt == 'parquet':
+            return pd.read_parquet(path)
+        sys.exit(f"_load_dataframe: unsupported format '{fmt}' (expected 'csv' or 'parquet')")
+
+    # ----------------------------------------------------------------
+    # Column selection — regex or explicit list
+    # ----------------------------------------------------------------
+    def _select_value_cols(self, df):
+        """Pick the columns named as time-sample values per --ts_value_cols.
+
+        Returns (x: np.ndarray of shape (N, T), cols: list[str] in sorted order).
+        Sort is by ASCII column name — deterministic across pandas versions.
+
+        Pattern semantics:
+        - If the flag value contains a comma, treat as explicit list.
+        - Otherwise, treat as regex pattern compiled with re.match.
+        """
+        pattern = getattr(self.args, 'ts_value_cols', None)
+        if pattern is None:
+            preview = list(df.columns[:5])
+            sys.exit(
+                "--ts_value_cols is required for csv/parquet inputs (regex pattern "
+                f"or comma-separated list). First columns in file: {preview}"
+            )
+
+        if ',' in pattern:
+            requested = [c.strip() for c in pattern.split(',') if c.strip()]
+            missing = [c for c in requested if c not in df.columns]
+            if missing:
+                sys.exit(
+                    f"--ts_value_cols: column(s) {missing} not in file. "
+                    f"Available: {list(df.columns)}"
+                )
+            cols = sorted(requested)
+        else:
+            try:
+                rx = re.compile(pattern)
+            except re.error as exc:
+                sys.exit(f"--ts_value_cols: invalid regex '{pattern}' ({exc})")
+            cols = sorted(c for c in df.columns if rx.match(str(c)))
+            if not cols:
+                sys.exit(
+                    f"--ts_value_cols regex '{pattern}' matched 0 columns. "
+                    f"Columns in file: {list(df.columns)}"
+                )
+
+        x = df[cols].to_numpy(dtype=np.float32)
+        return x, cols
