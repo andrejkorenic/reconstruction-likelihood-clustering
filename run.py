@@ -121,7 +121,7 @@ g.add_argument('--dataset_name', type=str, default='dynamic_mnist',
                         'histopathologyGray', 'freyfaces',
                         'svhn', 'cifar10',
                         'ecg5000', 'synthetic_timeseries',
-                        'csv_timeseries', 'parquet_timeseries'],
+                        'tabular_timeseries'],
                help='dataset to use')
 
 # --- Time series --------------------------------------------------------------
@@ -139,15 +139,41 @@ g.add_argument('--reconstruction_dist', type=str, default='beta',
 g.add_argument('--plot_timesteps', type=int, default=None,
                help='max timesteps to show in plots (default: all)')
 g.add_argument('--dynamic_binarization', action='store_true', help='enable dynamic binarization')
-g.add_argument('--csv_path', type=str, default=None,
-               help='path to TSV file for csv_timeseries dataset (tab-separated)')
-g.add_argument('--csv_meta_cols', type=int, default=2,
-               help='number of leading metadata columns to drop in csv_timeseries (default: 2)')
-g.add_argument('--parquet_path', type=str, default=None,
-               help='path to Parquet file for parquet_timeseries dataset')
 g.add_argument('--continuous',           action='store_true', help='treat data as continuous (gray) instead of binary')
 g.add_argument('--use_logit',            action='store_true', help='apply logit preprocessing to continuous data')
 g.add_argument('--lambd', type=float, default=1e-4,          help='lambda for logit transform (avoids log(0))')
+
+# --- Tabular time-series (bring-your-own data: CSV / TSV / Parquet / NPY) ----
+# See API.md ("Tabular time-series — bring your own data") for the full reference.
+g = parser.add_argument_group('Tabular time-series')
+g.add_argument('--ts_path', type=str, default=None,
+               help='single-file path (csv/tsv/parquet/npy); auto-split into train/val/test '
+                    'per --ts_split. Mutually exclusive with --ts_train_path et al.')
+g.add_argument('--ts_train_path', type=str, default=None,
+               help='pre-split train file (must be paired with --ts_val_path and --ts_test_path)')
+g.add_argument('--ts_val_path', type=str, default=None,
+               help='pre-split validation file')
+g.add_argument('--ts_test_path', type=str, default=None,
+               help='pre-split test file')
+g.add_argument('--ts_format', type=str, default='auto',
+               choices=['auto', 'csv', 'parquet', 'npy'],
+               help='file format; auto-detected from extension when "auto"')
+g.add_argument('--ts_csv_sep', type=str, default=',',
+               help="separator for csv format; default ',' but auto-falls-back to '\\t' "
+                    "for .tsv extension when sep is left at default")
+g.add_argument('--ts_value_cols', type=str, default=None,
+               help="sample-column selector. Regex if no comma (e.g. '^t_\\d+$'); "
+                    "comma-separated explicit list if comma present (e.g. 'a,b,c'). "
+                    "Required for csv/parquet; ignored for npy.")
+g.add_argument('--ts_label_col', type=str, default=None,
+               help='optional label column; pd.factorize maps strings to ints. '
+                    'When None, all labels are 0 (anomaly-detection style). Ignored for npy.')
+g.add_argument('--ts_split', type=str, default='0.8/0.1/0.1',
+               help="train/val/test ratios as 'a/b/c' summing to 1.0; "
+                    "ignored when pre-split paths are supplied")
+g.add_argument('--ts_normalise', type=str, default='global_minmax',
+               choices=['global_minmax', 'per_sample_minmax', 'zscore', 'none'],
+               help='normalisation mode; statistics computed from train split only')
 
 # --- Exemplar prior -----------------------------------------------------------
 g = parser.add_argument_group('Exemplar prior')
