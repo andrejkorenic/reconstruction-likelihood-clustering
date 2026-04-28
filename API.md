@@ -33,9 +33,7 @@ The contract is enforced by `unit_tests/test_cli_contract.py`. If that test pass
 | Flag | Type | Notes |
 |---|---|---|
 | `--model_name` | choice | One of `vae`, `iwae`, `iwae_2level`, `hvae_2level`, `convhvae_2level`, `pixelhvae_2level`, `timeseries_vae`, `convvae`. |
-| `--dataset_name` | str | Built-in: `dynamic_mnist`, `static_mnist`, `freyfaces`, `histopathologyGray`, `omniglot`, `caltech101silhouettes`, `cifar10`. Time-series: `synthetic_timeseries`, `csv_timeseries`, `parquet_timeseries`. |
-
-**Time-series dataset extras:** for `csv_timeseries` pass `--csv_path`/`--csv_meta_cols`; for `parquet_timeseries` pass `--parquet_path`. Both apply global MinMax normalisation and a deterministic 80/10/10 split.
+| `--dataset_name` | str | Built-in: `dynamic_mnist`, `static_mnist`, `freyfaces`, `histopathologyGray`, `omniglot`, `caltech101silhouettes`, `cifar10`. Time-series benchmark: `ecg5000`, `synthetic_timeseries`. Bring-your-own time-series: `tabular_timeseries` (see [section below](#tabular-time-series--bring-your-own-data)). |
 
 **Standard hyperparameters (most relevant):**
 
@@ -55,6 +53,65 @@ The contract is enforced by `unit_tests/test_cli_contract.py`. If that test pass
 **TimeSeriesVAE-specific:** `--seq_len`, `--trend_poly`, `--reconstruction_wt`, `--reconstruction_dist` (default `beta`), `--plot_timesteps`.
 
 **Auto-discover latent dim:** `--auto_z_size`, `--au_check_interval`, `--au_stability_count`, `--au_threshold`.
+
+### Tabular time-series — bring your own data
+
+`--dataset_name tabular_timeseries` is the unified entry point for arbitrary time-series in CSV/TSV/Parquet/NPY. No project-specific column conventions, no hardcoded splits.
+
+**Path (one of):**
+
+| Flag | Notes |
+|---|---|
+| `--ts_path` | Single file. The loader auto-splits into train/val/test per `--ts_split`. |
+| `--ts_train_path` + `--ts_val_path` + `--ts_test_path` | Pre-split mode. All three required if any is set. Each file is format-resolved independently — mixing `.csv` + `.parquet` + `.npy` across the three is legal. |
+
+**Format / parsing:**
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--ts_format` | `auto` | One of `{auto, csv, parquet, npy}`. `auto` reads from extension: `.csv`/`.tsv`→csv, `.parquet`/`.pq`→parquet, `.npy`→npy. |
+| `--ts_csv_sep` | `,` | Separator for csv format. A `.tsv` file with the default `,` silently falls back to `\t`. |
+| `--ts_value_cols` | (required for csv/parquet) | Sample-column selector. Regex if no comma (e.g. `'^t_\d+$'`); explicit comma-separated list if comma present (e.g. `'a,b,c'`). Ignored for npy. Output columns are sorted by name for determinism — for time order, prefer zero-padded names like `t_000, t_001, …`. |
+| `--ts_label_col` | None | Optional label column. Strings are factorised to `0..K-1` ints (first-seen order) via `pd.factorize`. None → all-zero labels. Ignored for npy. |
+
+**Split + normalisation:**
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--ts_split` | `0.8/0.1/0.1` | Train/val/test ratios as `a/b/c`, must sum to 1.0 (±1e-6). Used only in single-file mode. |
+| `--ts_normalise` | `global_minmax` | One of `{global_minmax, per_sample_minmax, zscore, none}`. Statistics are computed from the train split only and applied identically to val and test (no test-set leakage). `none` is a passthrough — caller is responsible for the data being in whatever range the decoder likelihood expects (Beta needs `[0, 1]`). |
+
+**Worked examples:**
+
+```bash
+# 1) Single-file CSV with regex column selection (calcium parquet style with t_NNN columns)
+uv run python run.py --dataset_name tabular_timeseries \
+    --ts_path data/segment1.parquet --ts_value_cols '^t_\d+$' \
+    --model_name timeseries_vae --prior vampprior --number_components 200
+
+# 2) TSV with explicit column list (no comma in --ts_value_cols means regex; comma means list)
+uv run python run.py --dataset_name tabular_timeseries \
+    --ts_path data/eeg.tsv --ts_value_cols 'ch1,ch2,ch3' --model_name timeseries_vae
+
+# 3) Pre-split (3 files; each format auto-detected per file extension)
+uv run python run.py --dataset_name tabular_timeseries \
+    --ts_train_path data/train.csv --ts_val_path data/val.csv --ts_test_path data/test.csv \
+    --ts_value_cols '^x_' --model_name timeseries_vae
+
+# 4) With label column (unlocks --KNN / --classify in analyze.py)
+uv run python run.py --dataset_name tabular_timeseries \
+    --ts_path data/segment1.parquet --ts_value_cols '^t_\d+$' \
+    --ts_label_col group --model_name timeseries_vae
+
+# 5) Z-score normalisation (e.g. EEG-style mean-zero unit-variance)
+uv run python run.py --dataset_name tabular_timeseries \
+    --ts_path data/eeg.parquet --ts_value_cols '^ch_\d+$' \
+    --ts_normalise zscore --model_name timeseries_vae
+
+# 6) NPY input (raw (N, T) float array; --ts_value_cols and --ts_label_col are ignored)
+uv run python run.py --dataset_name tabular_timeseries \
+    --ts_path data/series.npy --ts_normalise none --model_name timeseries_vae
+```
 
 **Output artefacts (under `pretrained_models/<run_id>/<timestamp>/`):**
 
@@ -95,7 +152,7 @@ At least one of the following must be specified, otherwise `analyze.py` exits wi
 | `--export_pseudo_prototypes` | path | path arg | See "export_pseudo_prototypes contract" below. |
 | `--ood_recon_nll` | path | path arg | Method E v1 — per-trace recon NLL via `--ood_K` MC samples. Lower nats = more in-distribution. |
 | `--ood_pseudo_recon` | prefix | `<prefix>.nll.npy` + `<prefix>.cluster.npy` | Method E v2 — score every ROI against each VampPrior pseudo-input prototype, take max. |
-| `--parquet_override` | path | (modifier) | Encode an arbitrary parquet through the trained model instead of the training-time `--parquet_path`. Applies to `--export_latents`, `--ood_recon_nll`, `--ood_pseudo_recon`. |
+| `--ts_path_override` | path | (modifier) | Encode an arbitrary csv/parquet/npy through the trained model instead of the training-time `--ts_path`. Applies to `--export_latents`, `--ood_recon_nll`, `--ood_pseudo_recon`. Format is auto-detected per the file extension (or trained-time `config.ts_format` if set). |
 | `--out_z` | path | (modifier) | Override default `z_mean.npy` location for `--export_latents`. |
 | `--ood_K` | int | (modifier, default 10) | MC samples for `--ood_recon_nll`. |
 | `--ood_dataset` | str | (modifier) | Second dataset for `--ood_scores` comparison. |
@@ -112,7 +169,7 @@ Encodes every row of the input parquet/CSV in **original order** (no shuffle) us
 | Shape | `(N, z1_size)` where `N` = rows in source data, `z1_size` from training config. |
 | Dtype | `float32`. |
 | Stdout marker | `LATENTS_PATH: <abs_path>` (consumers should parse this). |
-| Source | `--parquet_override` if set; else `config.parquet_path`; else `config.csv_path`. At least one must resolve. |
+| Source | `--ts_path_override` if set; else `config.ts_path`; else `config.ts_train_path`. At least one must resolve. |
 | Normalisation | Same global MinMax as training (`x = (x - x_min) / (x_max - x_min + 1e-7)`). |
 
 #### `--export_pseudo_prototypes`
