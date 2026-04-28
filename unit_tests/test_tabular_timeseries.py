@@ -345,3 +345,121 @@ class TestLabelColumn:
         df = loader._load_dataframe(str(path), 'csv')
         with pytest.raises(SystemExit):
             loader._extract_labels(df, n=len(df))
+
+
+# ======================================================================
+# Splits — single-file ratio + pre-split 3-path
+# ======================================================================
+class TestSplits:
+    def test_collision_ts_path_and_train_path(self):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        args = _make_args(ts_path='a.csv', ts_train_path='b.csv',
+                          ts_val_path='c.csv', ts_test_path='d.csv')
+        loader = tabular_timeseries_loader(args)
+        with pytest.raises(SystemExit):
+            loader._resolve_paths()
+
+    def test_pre_split_partial_only_two_paths(self):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        args = _make_args(ts_train_path='b.csv', ts_val_path='c.csv',
+                          ts_test_path=None)
+        loader = tabular_timeseries_loader(args)
+        with pytest.raises(SystemExit):
+            loader._resolve_paths()
+
+    def test_pre_split_all_three_paths(self):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        args = _make_args(ts_train_path='b.csv', ts_val_path='c.csv',
+                          ts_test_path='d.csv')
+        loader = tabular_timeseries_loader(args)
+        kind, paths = loader._resolve_paths()
+        assert kind == 'trio'
+        assert paths == ['b.csv', 'c.csv', 'd.csv']
+
+    def test_neither_ts_path_nor_trio(self):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        args = _make_args(ts_path=None)
+        loader = tabular_timeseries_loader(args)
+        with pytest.raises(SystemExit):
+            loader._resolve_paths()
+
+    def test_split_ratio_default(self):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        args = _make_args(ts_split='0.8/0.1/0.1')
+        loader = tabular_timeseries_loader(args)
+        ratios = loader._parse_split('0.8/0.1/0.1')
+        assert ratios == pytest.approx([0.8, 0.1, 0.1])
+
+    def test_split_ratio_custom(self):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        args = _make_args(ts_split='0.7/0.15/0.15')
+        loader = tabular_timeseries_loader(args)
+        ratios = loader._parse_split('0.7/0.15/0.15')
+        assert ratios == pytest.approx([0.7, 0.15, 0.15])
+
+    def test_split_ratio_must_sum_to_one(self):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        args = _make_args(ts_split='0.5/0.3/0.3')  # sums to 1.1
+        loader = tabular_timeseries_loader(args)
+        with pytest.raises(SystemExit):
+            loader._parse_split('0.5/0.3/0.3')
+
+    def test_split_ratio_wrong_count(self):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        args = _make_args(ts_split='0.8/0.2')
+        loader = tabular_timeseries_loader(args)
+        with pytest.raises(SystemExit):
+            loader._parse_split('0.8/0.2')
+
+    def test_single_path_default_split_sizes(self):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        rng = np.random.default_rng(0)
+        x = rng.random((100, 10)).astype(np.float32)
+        y = np.zeros(100, dtype=np.int64)
+        args = _make_args(ts_split='0.8/0.1/0.1', seed=42)
+        loader = tabular_timeseries_loader(args)
+        (xt, yt), (xv, yv), (xe, ye) = loader._split_single(x, y, '0.8/0.1/0.1')
+        assert len(xt) == 80
+        assert len(xv) == 10
+        assert len(xe) == 10
+        assert len(xt) + len(xv) + len(xe) == 100
+
+    def test_single_path_custom_split(self):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        rng = np.random.default_rng(0)
+        x = rng.random((100, 10)).astype(np.float32)
+        y = np.zeros(100, dtype=np.int64)
+        args = _make_args(ts_split='0.7/0.15/0.15', seed=42)
+        loader = tabular_timeseries_loader(args)
+        (xt, _), (xv, _), (xe, _) = loader._split_single(x, y, '0.7/0.15/0.15')
+        assert len(xt) == 70
+        assert len(xv) == 15
+        assert len(xe) == 15
+
+    def test_split_determinism_seed(self):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        rng = np.random.default_rng(0)
+        x = rng.random((100, 10)).astype(np.float32)
+        y = np.arange(100, dtype=np.int64)
+        args = _make_args(seed=42)
+        loader1 = tabular_timeseries_loader(args)
+        loader2 = tabular_timeseries_loader(args)
+        (xt1, yt1), _, _ = loader1._split_single(x, y, '0.8/0.1/0.1')
+        (xt2, yt2), _, _ = loader2._split_single(x, y, '0.8/0.1/0.1')
+        np.testing.assert_array_equal(xt1, xt2)
+        np.testing.assert_array_equal(yt1, yt2)
+
+    def test_split_different_seed(self):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        rng = np.random.default_rng(0)
+        x = rng.random((100, 10)).astype(np.float32)
+        y = np.arange(100, dtype=np.int64)
+        args1 = _make_args(seed=1)
+        args2 = _make_args(seed=2)
+        loader1 = tabular_timeseries_loader(args1)
+        loader2 = tabular_timeseries_loader(args2)
+        (_, yt1), _, _ = loader1._split_single(x, y, '0.8/0.1/0.1')
+        (_, yt2), _, _ = loader2._split_single(x, y, '0.8/0.1/0.1')
+        # With 100 samples and different seeds, the two permutations should differ
+        # almost surely. Test by checking the train-set indices are not identical.
+        assert not np.array_equal(yt1, yt2)

@@ -523,3 +523,76 @@ class tabular_timeseries_loader(base_load_data):
             )
         codes, _ = pd.factorize(df[col])
         return codes.astype(np.int64)
+
+    # ----------------------------------------------------------------
+    # Path resolution + splits
+    # ----------------------------------------------------------------
+    def _resolve_paths(self):
+        """Decide between single-file and pre-split modes.
+
+        Returns ('single', single_path) or ('trio', [train, val, test]).
+        Exits with a clear error on collision, partial trio, or neither.
+        """
+        single = getattr(self.args, 'ts_path', None)
+        trio = [getattr(self.args, f'ts_{s}_path', None) for s in ('train', 'val', 'test')]
+        any_trio = any(p is not None for p in trio)
+        all_trio = all(p is not None for p in trio)
+
+        if single and any_trio:
+            sys.exit(
+                "specify either --ts_path (single file, auto-split) OR "
+                "all three of --ts_train_path/--ts_val_path/--ts_test_path "
+                "(pre-split), not both"
+            )
+        if any_trio and not all_trio:
+            missing = [s for s, p in zip(('train', 'val', 'test'), trio) if p is None]
+            sys.exit(
+                f"pre-split mode requires --ts_train_path AND --ts_val_path AND "
+                f"--ts_test_path; missing: {missing}"
+            )
+        if not single and not all_trio:
+            sys.exit(
+                "no input path: specify --ts_path (single file) or "
+                "--ts_train_path / --ts_val_path / --ts_test_path (pre-split)"
+            )
+
+        if single:
+            return ('single', single)
+        return ('trio', trio)
+
+    def _parse_split(self, spec):
+        """Parse '0.8/0.1/0.1' → [0.8, 0.1, 0.1] with sum-to-1 validation."""
+        parts = spec.split('/')
+        if len(parts) != 3:
+            sys.exit(
+                f"--ts_split must have 3 ratios separated by '/', got {len(parts)}: '{spec}'"
+            )
+        try:
+            ratios = [float(p) for p in parts]
+        except ValueError:
+            sys.exit(f"--ts_split contains non-numeric ratio: '{spec}'")
+        if abs(sum(ratios) - 1.0) > 1e-6:
+            sys.exit(
+                f"--ts_split ratios must sum to 1.0 (±1e-6), got {sum(ratios):.6f}: '{spec}'"
+            )
+        return ratios
+
+    def _split_single(self, x, y, spec):
+        """Deterministic shuffle + ratio split of a single (x, y) into 3 splits.
+
+        Uses np.random.default_rng(self.args.seed) so two runs with the
+        same seed produce identical splits regardless of global RNG state.
+        """
+        ratios = self._parse_split(spec)
+        n = len(x)
+        rng = np.random.default_rng(getattr(self.args, 'seed', 42))
+        perm = rng.permutation(n)
+        x = x[perm]
+        y = y[perm]
+
+        n_train = int(round(ratios[0] * n))
+        n_val = int(round(ratios[1] * n))
+        x_train, y_train = x[:n_train], y[:n_train]
+        x_val, y_val = x[n_train:n_train + n_val], y[n_train:n_train + n_val]
+        x_test, y_test = x[n_train + n_val:], y[n_train + n_val:]
+        return (x_train, y_train), (x_val, y_val), (x_test, y_test)
