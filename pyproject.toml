@@ -1,5 +1,5 @@
 [project]
-name = "new-vae-bundle"
+name = "reconstruction-likelihood-clustering"
 version = "0.1.0"
 description = "Variational Autoencoder research toolkit: standard VAE, IWAE, VampPrior, ExemplarVAE, and hierarchical variants with clustering analysis and log-likelihood estimation."
 readme = "README.md"

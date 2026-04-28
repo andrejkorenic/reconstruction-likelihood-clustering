@@ -22,7 +22,6 @@ class BaseModel(nn.Module, ABC):
                   hidden_size, input_size, number_components, z1_size, device, ...).
         """
         super(BaseModel, self).__init__()
-        print("constructor")
         self.args = args
         # K>1 resampling is reserved for IWAE (future separate model).
         # Non-IWAE models always use a single latent sample.
@@ -62,8 +61,6 @@ class BaseModel(nn.Module, ABC):
         self.he_initializer()
 
     def he_initializer(self):
-        print("he initializer")
-
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 he_init(m)

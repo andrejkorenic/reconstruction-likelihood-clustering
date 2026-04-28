@@ -27,7 +27,7 @@ def evaluate_loss(args, model, loader, dataset=None, exemplars_embedding=None):
     Returns:
         Tuple (elbo, re, kl) averaged over the full dataset.
     """
-    evaluateed_elbo, evaluate_re, evaluate_kl = 0, 0, 0
+    evaluated_elbo, evaluate_re, evaluate_kl = 0, 0, 0
     model.eval()
 
     # Build prior embeddings once — expensive for exemplar_prior (requires a full
@@ -50,15 +50,15 @@ def evaluate_loss(args, model, loader, dataset=None, exemplars_embedding=None):
             x_indices = None
             x = (x, x_indices)
             loss, RE, KL = model.calculate_loss(x, average=False, exemplars_embedding=exemplars_embedding)
-            evaluateed_elbo += loss.sum().item()
+            evaluated_elbo += loss.sum().item()
             evaluate_re += -RE.sum().item()
             evaluate_kl += KL.sum().item()
     # Divide by total number of data points, not number of batches, for a
     # consistent per-sample average regardless of batch size.
-    evaluateed_elbo /= len(loader.dataset)
+    evaluated_elbo /= len(loader.dataset)
     evaluate_re /= len(loader.dataset)
     evaluate_kl /= len(loader.dataset)
-    return evaluateed_elbo, evaluate_re, evaluate_kl
+    return evaluated_elbo, evaluate_re, evaluate_kl
 
 
 def visualize_reconstruction(test_samples, model, args, dir):
