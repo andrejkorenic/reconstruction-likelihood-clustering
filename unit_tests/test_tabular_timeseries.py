@@ -282,3 +282,66 @@ class TestNpyInput:
         loader = tabular_timeseries_loader(args)
         x = loader._load_npy(str(p))
         assert x.dtype == np.float32
+
+
+# ======================================================================
+# Optional label column
+# ======================================================================
+class TestLabelColumn:
+    def test_no_label_col_default_zeros(self, tmp_path):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        path = tmp_path / "d.csv"
+        _csv_with_value_and_meta(path)
+        args = _make_args(ts_path=str(path), ts_value_cols=r'^t_\d+$', ts_label_col=None)
+        loader = tabular_timeseries_loader(args)
+        df = loader._load_dataframe(str(path), 'csv')
+        y = loader._extract_labels(df, n=len(df))
+        assert y.dtype == np.int64
+        assert (y == 0).all()
+        assert len(y) == len(df)
+
+    def test_label_col_strings(self, tmp_path):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        path = tmp_path / "d.csv"
+        df_orig, _ = _csv_with_value_and_meta(path)
+        args = _make_args(ts_path=str(path), ts_value_cols=r'^t_\d+$', ts_label_col='group')
+        loader = tabular_timeseries_loader(args)
+        df = loader._load_dataframe(str(path), 'csv')
+        y = loader._extract_labels(df, n=len(df))
+        # 'group' alternates ALS/CTRL; pd.factorize gives ALS=0, CTRL=1 (first-seen order)
+        assert y.dtype == np.int64
+        assert set(y.tolist()) == {0, 1}
+        # Same string should always factorise to the same int
+        for i, label in enumerate(df_orig['group']):
+            for j, other in enumerate(df_orig['group']):
+                if label == other:
+                    assert y[i] == y[j]
+
+    def test_label_col_ints(self, tmp_path):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        path = tmp_path / "d.csv"
+        rng = np.random.default_rng(0)
+        df = pd.DataFrame({
+            't_0': rng.random(6).astype(np.float32),
+            't_1': rng.random(6).astype(np.float32),
+            'cls': [3, 1, 4, 1, 5, 9],
+        })
+        df.to_csv(path, index=False)
+        args = _make_args(ts_path=str(path), ts_value_cols=r'^t_\d+$', ts_label_col='cls')
+        loader = tabular_timeseries_loader(args)
+        df_loaded = loader._load_dataframe(str(path), 'csv')
+        y = loader._extract_labels(df_loaded, n=len(df_loaded))
+        assert y.dtype == np.int64
+        # factorize re-codes by first-seen order: 3→0, 1→1, 4→2, 5→3, 9→4
+        assert y.tolist() == [0, 1, 2, 1, 3, 4]
+
+    def test_label_col_missing(self, tmp_path):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        path = tmp_path / "d.csv"
+        _csv_with_value_and_meta(path)
+        args = _make_args(ts_path=str(path), ts_value_cols=r'^t_\d+$',
+                          ts_label_col='nonexistent')
+        loader = tabular_timeseries_loader(args)
+        df = loader._load_dataframe(str(path), 'csv')
+        with pytest.raises(SystemExit):
+            loader._extract_labels(df, n=len(df))

@@ -502,3 +502,24 @@ class tabular_timeseries_loader(base_load_data):
                 f"shape: {arr.shape}"
             )
         return arr.astype(np.float32, copy=False)
+
+    # ----------------------------------------------------------------
+    # Label extraction
+    # ----------------------------------------------------------------
+    def _extract_labels(self, df, n):
+        """Return an int64 label array of length n.
+
+        - --ts_label_col not set → all zeros (anomaly-detection / unsupervised default).
+        - --ts_label_col present in df → pd.factorize maps string/object to ints.
+        """
+        import pandas as pd
+        col = getattr(self.args, 'ts_label_col', None)
+        if col is None:
+            return np.zeros(n, dtype=np.int64)
+        if col not in df.columns:
+            sys.exit(
+                f"--ts_label_col '{col}' not found in file. "
+                f"Available columns: {list(df.columns)}"
+            )
+        codes, _ = pd.factorize(df[col])
+        return codes.astype(np.int64)
