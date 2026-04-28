@@ -463,3 +463,75 @@ class TestSplits:
         # With 100 samples and different seeds, the two permutations should differ
         # almost surely. Test by checking the train-set indices are not identical.
         assert not np.array_equal(yt1, yt2)
+
+
+# ======================================================================
+# Normalisation
+# ======================================================================
+class TestNormalisation:
+    def _three_splits(self):
+        rng = np.random.default_rng(0)
+        x_train = rng.random((20, 5)).astype(np.float32) * 2.0  # range [0, 2)
+        x_val = rng.random((5, 5)).astype(np.float32) * 3.0     # exceeds train range
+        x_test = rng.random((5, 5)).astype(np.float32) * 0.5    # below train range
+        return x_train, x_val, x_test
+
+    def test_global_minmax_train_in_unit_interval(self):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        args = _make_args(ts_normalise='global_minmax')
+        loader = tabular_timeseries_loader(args)
+        x_train, x_val, x_test = self._three_splits()
+        xt, xv, xe = loader._normalise(x_train.copy(), x_val.copy(), x_test.copy())
+        assert xt.min() >= 0.0 and xt.max() <= 1.0 + 1e-6
+
+    def test_global_minmax_does_not_use_test_data(self):
+        """Test data outside the train min/max should map outside [0, 1]."""
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        args = _make_args(ts_normalise='global_minmax')
+        loader = tabular_timeseries_loader(args)
+        x_train = np.array([[0.0, 1.0], [0.5, 1.0]], dtype=np.float32)
+        x_val = np.array([[2.0, -1.0]], dtype=np.float32)
+        x_test = np.array([[3.0, -2.0]], dtype=np.float32)
+        xt, xv, xe = loader._normalise(x_train.copy(), x_val.copy(), x_test.copy())
+        # train min=0, max=1 → val 2 maps to 2.0, val -1 maps to -1.0
+        assert xv[0, 0] == pytest.approx(2.0, rel=1e-5)
+        assert xv[0, 1] < 0.0
+        assert xe[0, 0] > 1.0
+
+    def test_per_sample_minmax(self):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        args = _make_args(ts_normalise='per_sample_minmax')
+        loader = tabular_timeseries_loader(args)
+        x_train, x_val, x_test = self._three_splits()
+        xt, xv, xe = loader._normalise(x_train.copy(), x_val.copy(), x_test.copy())
+        for x in (xt, xv, xe):
+            for row in x:
+                assert row.min() == pytest.approx(0.0, abs=1e-5)
+                assert row.max() == pytest.approx(1.0, abs=1e-5)
+
+    def test_zscore(self):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        args = _make_args(ts_normalise='zscore')
+        loader = tabular_timeseries_loader(args)
+        x_train, x_val, x_test = self._three_splits()
+        xt, _, _ = loader._normalise(x_train.copy(), x_val.copy(), x_test.copy())
+        assert xt.mean() == pytest.approx(0.0, abs=1e-5)
+        assert xt.std() == pytest.approx(1.0, abs=1e-3)
+
+    def test_none_passthrough(self):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        args = _make_args(ts_normalise='none')
+        loader = tabular_timeseries_loader(args)
+        x_train, x_val, x_test = self._three_splits()
+        xt, xv, xe = loader._normalise(x_train.copy(), x_val.copy(), x_test.copy())
+        np.testing.assert_array_equal(xt, x_train)
+        np.testing.assert_array_equal(xv, x_val)
+        np.testing.assert_array_equal(xe, x_test)
+
+    def test_unknown_normalise_mode(self):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        args = _make_args(ts_normalise='banana')
+        loader = tabular_timeseries_loader(args)
+        x_train, x_val, x_test = self._three_splits()
+        with pytest.raises(SystemExit):
+            loader._normalise(x_train, x_val, x_test)

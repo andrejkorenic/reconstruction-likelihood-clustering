@@ -596,3 +596,37 @@ class tabular_timeseries_loader(base_load_data):
         x_val, y_val = x[n_train:n_train + n_val], y[n_train:n_train + n_val]
         x_test, y_test = x[n_train + n_val:], y[n_train + n_val:]
         return (x_train, y_train), (x_val, y_val), (x_test, y_test)
+
+    # ----------------------------------------------------------------
+    # Normalisation
+    # ----------------------------------------------------------------
+    def _normalise(self, x_train, x_val, x_test):
+        """Apply the chosen --ts_normalise mode.
+
+        Statistics are computed from x_train only and applied to all three
+        splits — prevents test-set leakage in modes that need a global
+        scale (global_minmax, zscore). per_sample_minmax is row-local so
+        leakage is moot. 'none' passes through unchanged.
+        """
+        mode = getattr(self.args, 'ts_normalise', 'global_minmax')
+        if mode == 'global_minmax':
+            lo = float(x_train.min())
+            hi = float(x_train.max())
+            denom = hi - lo + 1e-7
+            return tuple((x - lo) / denom for x in (x_train, x_val, x_test))
+        if mode == 'per_sample_minmax':
+            def f(x):
+                lo = x.min(axis=1, keepdims=True)
+                hi = x.max(axis=1, keepdims=True)
+                return (x - lo) / (hi - lo + 1e-7)
+            return tuple(f(x) for x in (x_train, x_val, x_test))
+        if mode == 'zscore':
+            mu = float(x_train.mean())
+            sigma = float(x_train.std())
+            return tuple((x - mu) / (sigma + 1e-7) for x in (x_train, x_val, x_test))
+        if mode == 'none':
+            return x_train, x_val, x_test
+        sys.exit(
+            f"--ts_normalise must be one of "
+            f"{{global_minmax, per_sample_minmax, zscore, none}}, got '{mode}'"
+        )
