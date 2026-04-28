@@ -236,3 +236,49 @@ class TestColumnSelection:
         x, cols = loader._select_value_cols(df_loaded)
         assert cols == expected
         assert x.shape == (8, 5)
+
+
+# ======================================================================
+# NPY input
+# ======================================================================
+class TestNpyInput:
+    def test_npy_2d_shape(self, tmp_path):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        arr = np.random.default_rng(0).random((40, 20)).astype(np.float32)
+        p = tmp_path / "d.npy"
+        np.save(p, arr)
+        args = _make_args(ts_path=str(p))
+        loader = tabular_timeseries_loader(args)
+        x = loader._load_npy(str(p))
+        assert x.shape == (40, 20)
+        assert x.dtype == np.float32
+
+    def test_npy_1d_fails(self, tmp_path):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        arr = np.array([1.0, 2.0, 3.0])
+        p = tmp_path / "d.npy"
+        np.save(p, arr)
+        args = _make_args(ts_path=str(p))
+        loader = tabular_timeseries_loader(args)
+        with pytest.raises(SystemExit):
+            loader._load_npy(str(p))
+
+    def test_npy_3d_fails(self, tmp_path):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        arr = np.random.default_rng(0).random((4, 5, 6)).astype(np.float32)
+        p = tmp_path / "d.npy"
+        np.save(p, arr)
+        args = _make_args(ts_path=str(p))
+        loader = tabular_timeseries_loader(args)
+        with pytest.raises(SystemExit):
+            loader._load_npy(str(p))
+
+    def test_npy_dtype_coerced_to_float32(self, tmp_path):
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        arr = np.random.default_rng(0).random((5, 7)).astype(np.float64)
+        p = tmp_path / "d.npy"
+        np.save(p, arr)
+        args = _make_args(ts_path=str(p))
+        loader = tabular_timeseries_loader(args)
+        x = loader._load_npy(str(p))
+        assert x.dtype == np.float32

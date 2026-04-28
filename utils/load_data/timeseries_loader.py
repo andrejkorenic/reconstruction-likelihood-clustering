@@ -484,3 +484,21 @@ class tabular_timeseries_loader(base_load_data):
 
         x = df[cols].to_numpy(dtype=np.float32)
         return x, cols
+
+    # ----------------------------------------------------------------
+    # NPY direct loading
+    # ----------------------------------------------------------------
+    def _load_npy(self, path):
+        """Load a .npy file as a 2D float32 array (N, T).
+
+        --ts_value_cols and --ts_label_col are silently ignored for npy
+        input; npy has no column names and no built-in label channel.
+        Users who need labels should use csv/parquet.
+        """
+        arr = np.load(path)
+        if arr.ndim != 2:
+            sys.exit(
+                f"--ts_path '{path}' loaded a {arr.ndim}D npy array, expected 2D (N, T). "
+                f"shape: {arr.shape}"
+            )
+        return arr.astype(np.float32, copy=False)
