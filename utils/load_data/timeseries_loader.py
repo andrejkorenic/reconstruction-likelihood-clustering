@@ -4,9 +4,14 @@ Time series data loaders for the VAE framework.
 Supported datasets:
   - ECG5000: UCR Time Series Archive, 140 timesteps, 1 feature, 5 classes
   - synthetic_timeseries: generated sine waves with trend + noise (no download)
+  - csv_timeseries: legacy bring-your-own CSV — DEPRECATED in favour of tabular_timeseries
+  - parquet_timeseries: legacy bring-your-own Parquet — DEPRECATED in favour of tabular_timeseries
+  - tabular_timeseries: unified bring-your-own CSV/TSV/Parquet/NPY loader (univariate only)
 """
 
 import os
+import re
+import sys
 import zipfile
 import numpy as np
 import torch
@@ -354,3 +359,67 @@ class parquet_timeseries_loader(base_load_data):
             x_train, x_val, x_test, y_train, y_val, y_test, **kwargs)
 
         return train_loader, val_loader, test_loader, self.args
+
+
+# ======================================================================================================================
+# Unified tabular time-series loader (CSV / TSV / Parquet / NPY)
+# ======================================================================================================================
+class tabular_timeseries_loader(base_load_data):
+    """Unified bring-your-own time-series loader for CSV/TSV/Parquet/NPY input.
+
+    Replaces the project-specific csv_timeseries_loader and
+    parquet_timeseries_loader. Driven entirely by --ts_* CLI flags;
+    no hardcoded column conventions. Univariate only (feat_dim=1);
+    multivariate is out of scope for this loader.
+
+    See API.md ("Tabular time-series — bring your own data") for the
+    full flag and input-contract reference.
+    """
+
+    _EXT_TO_FORMAT = {
+        '.csv': 'csv', '.tsv': 'csv',
+        '.parquet': 'parquet', '.pq': 'parquet',
+        '.npy': 'npy',
+    }
+
+    def __init__(self, args, **kwargs):
+        super().__init__(args)
+
+    def obtain_data(self):
+        # tabular_timeseries overrides load_dataset() entirely; obtain_data
+        # exists only to satisfy the abstractmethod from base_load_data.
+        return None, None
+
+    # ----------------------------------------------------------------
+    # Format / separator resolution
+    # ----------------------------------------------------------------
+    def _resolve_format(self, path):
+        """Return the effective file format ('csv'/'parquet'/'npy').
+
+        Honour `args.ts_format` if set to a concrete value; otherwise
+        infer from extension. Exit with a clear error if the extension
+        is unknown and no override was given.
+        """
+        explicit = getattr(self.args, 'ts_format', 'auto')
+        if explicit and explicit != 'auto':
+            return explicit
+        ext = os.path.splitext(str(path))[1].lower()
+        fmt = self._EXT_TO_FORMAT.get(ext)
+        if fmt is None:
+            sys.exit(
+                f"--ts_path '{path}' has unrecognised extension '{ext}'. "
+                f"Pass --ts_format {{csv,parquet,npy}} or rename the file. "
+                f"Supported extensions: {sorted(self._EXT_TO_FORMAT.keys())}"
+            )
+        return fmt
+
+    def _effective_csv_sep(self, path):
+        """Default --ts_csv_sep to '\\t' for .tsv files when user kept the default ','.
+
+        Lets users name a file `data.tsv` and not have to remember
+        `--ts_csv_sep "\\t"`. Any non-default user value wins.
+        """
+        sep = getattr(self.args, 'ts_csv_sep', ',')
+        if sep == ',' and str(path).lower().endswith('.tsv'):
+            return '\t'
+        return sep
