@@ -224,6 +224,69 @@ class TestColumnSelection:
         _, cols = loader._select_value_cols(df_loaded)
         assert cols == ['t_0', 't_1', 't_2', 't_3']
 
+    def test_natural_sort_multi_digit_with_prefix(self, tmp_path):
+        """Names like 't_5', 't_42', 't_100' must sort numerically not lexically.
+
+        Lexical sort would give ['t_100', 't_42', 't_5', 't_7'] which is wrong
+        for time order. Natural sort gives ['t_5', 't_7', 't_42', 't_100'].
+        """
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        path = tmp_path / "d.csv"
+        rng = np.random.default_rng(0)
+        df = pd.DataFrame({
+            't_5': rng.random(4),
+            't_42': rng.random(4),
+            't_100': rng.random(4),
+            't_7': rng.random(4),
+        })
+        df.to_csv(path, index=False)
+        args = _make_args(ts_path=str(path), ts_value_cols=r'^t_\d+$')
+        loader = tabular_timeseries_loader(args)
+        df_loaded = loader._load_dataframe(str(path), 'csv')
+        _, cols = loader._select_value_cols(df_loaded)
+        assert cols == ['t_5', 't_7', 't_42', 't_100']
+
+    def test_natural_sort_pure_numeric_names(self, tmp_path):
+        """Pure-numeric column names ('0', '1', '10', '20') sort numerically.
+
+        This is the gotcha case for fixtures created by np.savetxt with
+        header=range(N): without natural sort, order would be
+        ['0', '1', '10', '11', ..., '19', '2', '3', ..., '9'].
+        """
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        path = tmp_path / "d.csv"
+        rng = np.random.default_rng(0)
+        df = pd.DataFrame({
+            '0': rng.random(4),
+            '20': rng.random(4),
+            '1': rng.random(4),
+            '10': rng.random(4),
+            '2': rng.random(4),
+        })
+        df.to_csv(path, index=False)
+        args = _make_args(ts_path=str(path), ts_value_cols=r'^\d+$')
+        loader = tabular_timeseries_loader(args)
+        df_loaded = loader._load_dataframe(str(path), 'csv')
+        _, cols = loader._select_value_cols(df_loaded)
+        assert cols == ['0', '1', '2', '10', '20']
+
+    def test_natural_sort_explicit_list(self, tmp_path):
+        """Natural sort applies to explicit list mode too: 't_42,t_5,t_100' → numeric order."""
+        from utils.load_data.timeseries_loader import tabular_timeseries_loader
+        path = tmp_path / "d.csv"
+        rng = np.random.default_rng(0)
+        df = pd.DataFrame({
+            't_5': rng.random(4),
+            't_42': rng.random(4),
+            't_100': rng.random(4),
+        })
+        df.to_csv(path, index=False)
+        args = _make_args(ts_path=str(path), ts_value_cols='t_42,t_5,t_100')
+        loader = tabular_timeseries_loader(args)
+        df_loaded = loader._load_dataframe(str(path), 'csv')
+        _, cols = loader._select_value_cols(df_loaded)
+        assert cols == ['t_5', 't_42', 't_100']
+
     def test_csv_sep_tsv(self, tmp_path):
         from utils.load_data.timeseries_loader import tabular_timeseries_loader
         path = tmp_path / "d.tsv"

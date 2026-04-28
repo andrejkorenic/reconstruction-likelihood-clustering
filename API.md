@@ -71,7 +71,7 @@ The contract is enforced by `unit_tests/test_cli_contract.py`. If that test pass
 |---|---|---|
 | `--ts_format` | `auto` | One of `{auto, csv, parquet, npy}`. `auto` reads from extension: `.csv`/`.tsv`→csv, `.parquet`/`.pq`→parquet, `.npy`→npy. |
 | `--ts_csv_sep` | `,` | Separator for csv format. A `.tsv` file with the default `,` silently falls back to `\t`. |
-| `--ts_value_cols` | (required for csv/parquet) | Sample-column selector. Regex if no comma (e.g. `'^t_\d+$'`); explicit comma-separated list if comma present (e.g. `'a,b,c'`). Ignored for npy. Output columns are sorted by name for determinism — for time order, prefer zero-padded names like `t_000, t_001, …`. |
+| `--ts_value_cols` | (required for csv/parquet) | Sample-column selector. Regex if no comma (e.g. `'^t_\d+$'`); explicit comma-separated list if comma present (e.g. `'a,b,c'`). Ignored for npy. Output columns are **natural-sorted** so `'t_2' < 't_10' < 't_42'` (integer runs sort numerically); zero-padding is not required. |
 | `--ts_label_col` | None | Optional label column. Strings are factorised to `0..K-1` ints (first-seen order) via `pd.factorize`. None → all-zero labels. Ignored for npy. |
 
 **Split + normalisation:**

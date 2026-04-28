@@ -286,11 +286,32 @@ class tabular_timeseries_loader(base_load_data):
     # ----------------------------------------------------------------
     # Column selection — regex or explicit list
     # ----------------------------------------------------------------
+    @staticmethod
+    def _natural_sort_key(name):
+        """Natural sort key: integer runs within the name sort numerically.
+
+        Examples:
+            't_5' < 't_42' < 't_100'    (trailing-numeric, common case)
+            '5'   < '42'   < '100'       (purely-numeric names)
+            'a'   < 'b'                   (alpha-only fallback to lexical)
+            'ch1_t5' < 'ch1_t42'         (mixed text + multiple ints)
+
+        Implementation: split the name on digit runs, convert digit runs
+        to int, leave everything else as str. Tuple comparison then sorts
+        numerically by the integer pieces and lexically by the text
+        pieces, position by position. Two names with the same structure
+        always have matching types per position so comparisons never
+        TypeError.
+        """
+        return [int(s) if s.isdigit() else s
+                for s in re.split(r'(\d+)', str(name))]
+
     def _select_value_cols(self, df):
         """Pick the columns named as time-sample values per --ts_value_cols.
 
-        Returns (x: np.ndarray of shape (N, T), cols: list[str] in sorted order).
-        Sort is by ASCII column name — deterministic across pandas versions.
+        Returns (x: np.ndarray of shape (N, T), cols: list[str] sorted
+        by natural numeric order so 't_2' < 't_10' < 't_42'). The sort
+        is deterministic across pandas versions.
 
         Pattern semantics:
         - If the flag value contains a comma, treat as explicit list.
@@ -312,13 +333,14 @@ class tabular_timeseries_loader(base_load_data):
                     f"--ts_value_cols: column(s) {missing} not in file. "
                     f"Available: {list(df.columns)}"
                 )
-            cols = sorted(requested)
+            cols = sorted(requested, key=self._natural_sort_key)
         else:
             try:
                 rx = re.compile(pattern)
             except re.error as exc:
                 sys.exit(f"--ts_value_cols: invalid regex '{pattern}' ({exc})")
-            cols = sorted(c for c in df.columns if rx.match(str(c)))
+            cols = sorted((c for c in df.columns if rx.match(str(c))),
+                          key=self._natural_sort_key)
             if not cols:
                 sys.exit(
                     f"--ts_value_cols regex '{pattern}' matched 0 columns. "
