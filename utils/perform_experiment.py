@@ -311,7 +311,12 @@ def experiment_vae(args, train_loader, val_loader, test_loader, model, optimizer
                             print(f'[AU] Warning: Only {active} dims active '
                                   '— possible posterior collapse or insufficient warmup.')
 
-                        accepted = _prompt_auto_z_size(active, args.z1_size)
+                        # Skip interactive prompt when running non-interactively (e.g. subprocess)
+                        if getattr(args, 'auto_accept_z', False):
+                            print(f'[AU] auto_accept_z=True — auto-accepting restart with z={active}')
+                            accepted = True
+                        else:
+                            accepted = _prompt_auto_z_size(active, args.z1_size)
                         result = au_monitor.get_result(args.z1_size, epoch, accepted)
 
                         with open(dir + 'auto_z_size_result.json', 'w') as f:

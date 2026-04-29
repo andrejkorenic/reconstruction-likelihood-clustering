@@ -71,6 +71,7 @@ g.add_argument('--same_variational_var', action='store_true', help='use scalar l
 # --- Adaptive latent size discovery ------------------------------------------
 g = parser.add_argument_group('Adaptive latent size')
 g.add_argument('--auto_z_size',        action='store_true',       help='enable adaptive latent dimension discovery')
+g.add_argument('--auto_accept_z',      action='store_true',       help='auto-accept AU restart without interactive prompt (for non-interactive / CI runs)')
 g.add_argument('--au_check_interval',  type=int,   default=5,     help='compute active units every N epochs')
 g.add_argument('--au_stability_count', type=int,   default=5,     help='consecutive stable readings before prompting')
 g.add_argument('--au_threshold',       type=float, default=0.01,  help='variance threshold for active dimension')
