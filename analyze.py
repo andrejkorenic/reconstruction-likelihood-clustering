@@ -83,6 +83,11 @@ g.add_argument('--export_pseudo_prototypes', type=str, default=None,
                     '(model.means(model.idle_input) -> q_z -> p_x) and '
                     'save the resulting (K, D) raw waveform matrix as '
                     'float32 to this path; for OOD validation diagnostics')
+g.add_argument('--export_pseudo_prototype_latents', type=str, default=None,
+               help='encode the K VampPrior pseudo-inputs '
+                    '(model.means(model.idle_input) -> q_z) and save the '
+                    'resulting (K, z_dim) latent-mean matrix as float32 to '
+                    'this path; for HDBSCAN.approximate_predict bridge analysis')
 
 # --- Settings -------------------------------------------------------------
 g = parser.add_argument_group('Settings')
@@ -216,19 +221,22 @@ def main():
     analysis_flags = ['cluster', 'recon_viz', 'generate', 'KNN', 'classify',
                       'ood_scores', 'cyclic_generation', 'export_latents',
                       'ood_recon_nll', 'ood_pseudo_recon',
-                      'export_pseudo_prototypes']
+                      'export_pseudo_prototypes',
+                      'export_pseudo_prototype_latents']
     if not any(getattr(args, f) for f in analysis_flags):
         print("Error: no analysis flag specified. Use one or more of:")
-        print("  --cluster --recon_viz --generate --KNN --classify --ood_scores --cyclic_generation --export_latents --ood_recon_nll --ood_pseudo_recon --export_pseudo_prototypes")
+        print("  --cluster --recon_viz --generate --KNN --classify --ood_scores --cyclic_generation --export_latents --ood_recon_nll --ood_pseudo_recon --export_pseudo_prototypes --export_pseudo_prototype_latents")
         sys.exit(1)
 
     # Load model once
     print(f"Loading model from {directory}...")
-    # Skip data loading if only exporting pseudo prototypes (doesn't need dataset)
-    skip_data_loading = (args.export_pseudo_prototypes is not None and
-                         not any(getattr(args, f) for f in ['cluster', 'recon_viz', 'generate',
-                                                             'KNN', 'classify', 'ood_scores',
-                                                             'cyclic_generation', 'export_latents']))
+    # Skip data loading if only exporting pseudo prototypes / latents (no dataset needed)
+    proto_only = ((args.export_pseudo_prototypes is not None
+                   or args.export_pseudo_prototype_latents is not None)
+                  and not any(getattr(args, f) for f in ['cluster', 'recon_viz', 'generate',
+                                                          'KNN', 'classify', 'ood_scores',
+                                                          'cyclic_generation', 'export_latents']))
+    skip_data_loading = proto_only
     model, config, train_loader, val_loader, test_loader = _load_pretrained_models(directory, skip_data_loading=skip_data_loading)
     args.input_type = config.input_type
     args.input_size = config.input_size
@@ -468,6 +476,21 @@ def main():
         np.save(out_path, proto_arr)
         print(f"PSEUDO_PROTOTYPES_PATH: {out_path}")
         print(f"Wrote pseudo prototypes: shape {proto_arr.shape} → {out_path}")
+    if args.export_pseudo_prototype_latents:
+        K = config.number_components
+        with torch.no_grad():
+            if config.prior == 'vampprior':
+                pseudo_x = model.means(model.idle_input)         # (K, D)
+                z_mean_proto, _ = model.q_z(pseudo_x)            # (K, z_dim)
+            else:
+                torch.manual_seed(0)
+                z_mean_proto = torch.randn(K, config.z1_size, device=args.device)
+        z_arr = z_mean_proto.cpu().numpy().astype(np.float32)
+        out_path = args.export_pseudo_prototype_latents
+        os.makedirs(os.path.dirname(os.path.abspath(out_path)) or '.', exist_ok=True)
+        np.save(out_path, z_arr)
+        print(f"PSEUDO_PROTOTYPE_LATENTS_PATH: {out_path}")
+        print(f"Wrote pseudo prototype latents: shape {z_arr.shape} → {out_path}")
 
     print("\nAll analyses complete.")
 
